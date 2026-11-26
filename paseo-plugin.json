@@ -1,0 +1,8 @@
+{
+  "id": "user-todos",
+  "name": "User Todos",
+  "description": "Gives the tasks an agent hands you, the ones only you can do, a panel beside the chat, with the steps, the links, and a tick that tells the agent",
+  "requirements": {
+    "paseo": ">=0.17.4"
+  }
+}

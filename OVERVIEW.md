@@ -1,0 +1,16 @@
+User Todos gives the tasks an agent hands you, the ones only you can do, a place to wait: a Todos panel in the Explorer, beside the chat.
+
+An agent that needs you to make an account, paste a key into a dashboard, approve a change at a registrar or test on a real phone proposes a todo instead of burying the ask in a reply. Each todo has a short reason, a bulleted list of steps, the exact links you need, optional tags, and a jump back to the message it came from.
+
+How it works:
+
+- A proposal is held back for a turn or two (1 to 3, your choice) and shows only if you haven't answered it in chat. If you resolve it first, the agent withdraws it.
+- Every card has a colored status pill at its top right: TODO, DOING, HOLD, DONE and CANCEL to start with. A click opens the status list; swiping a card right past about 90px marks it DONE. A status other than TODO tints the card faintly in its color. Edit the list from the gear (names, colors, icons, order, and whether a status closes a todo). Moving a card between an open status and a closing one (DONE, CANCEL) tells the agent in the chat. Moving between open statuses tells no one.
+- Cards drag to reorder. The sort menu groups by chat or by status and sorts newest first, oldest first or manually; dragging switches to manual and remembers the order per chat.
+- Tags look like the workspace labels in Paseo's sidebar and sit on their own row at the bottom of the card. The "#" button in the card's last row, beside the time, opens a Labels menu like Paseo's. It lists Paseo's own labels first, in Paseo's colors, then the ones you made here. "Manage labels" renames, recolors and deletes the labels made here, with a count of the todos using each; Paseo's labels are shown but changed only in Paseo. The agent can add tags when it proposes a todo; ones with no color get a stable one from their name.
+- "+" opens a blank card at the top of the list for a todo of your own. It shows at once, and closing it tells no one.
+- The Current / All switch sits in the panel header. "All" lists every chat's todos in the workspace, grouped by chat or by status, and each group folds.
+
+Setup: the plugin adds three tools to your chats (propose, withdraw and list). Chats that were already open pick them up the next time they open. Settings, in the panel's gear: how many turns to wait, whether the panel opens by itself, confetti, and the status list.
+
+Limits: Paseo has no plugin call to list or edit its workspace labels, so they are read from its labels file on the daemon host and never written. Todos are stored on the daemon's machine, so they follow the host, not the client. Jumping to a message scrolls the chat only on the web and desktop app; elsewhere it opens the chat. Dragging a card works with a mouse or, on touch, after a long press.
