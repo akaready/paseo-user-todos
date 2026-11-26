@@ -382,13 +382,14 @@ export function TodoCard({
                     {(over) => (
                       <Pressable
                         accessibilityRole="link"
-                        accessibilityLabel={link.label ?? link.url}
+                        accessibilityLabel={link.url}
                         onPress={guard(() => onLink(link.url))}
                         style={[styles.chip, { borderColor: edge }, over && styles.chipHover]}
                       >
                         <View style={styles.chipText}>
-                          <Text style={styles.host}>{link.label ?? host}</Text>
-                          {link.label ? null : path ? <Text style={styles.path}>{path}</Text> : null}
+                          {/* Always the real host and path: a label from the agent never stands in for where a link goes. */}
+                          <Text style={styles.host}>{host}</Text>
+                          {path ? <Text style={styles.path}>{path}</Text> : null}
                         </View>
                         <Icon name="ArrowUpRight" size={11} color={over ? colors.foreground : colors.foregroundMuted} />
                       </Pressable>
