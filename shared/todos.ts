@@ -139,6 +139,12 @@ export type ListStyle = (typeof LIST_STYLES)[number];
 export const todoStepSchema = z.object({ text: z.string(), done: z.boolean() });
 export const todoLinkSchema = z.object({ url: z.string(), label: z.string().optional() });
 
+/** The most a comment may hold. */
+export const COMMENT_MAX = 2000;
+
+/** A note the user left on a todo. Removed ones are kept in the store and never reach the wire. */
+export const todoCommentSchema = z.object({ id: z.string(), text: z.string(), at: z.number() });
+
 export const todoSchema = z.object({
   id: z.string(),
   agentId: z.string(),
@@ -157,6 +163,8 @@ export const todoSchema = z.object({
   /** Whether that status closes the todo, so the card sits in the bottom group. */
   closed: z.boolean(),
   tags: z.array(z.string()),
+  /** The user's comments, oldest first. The agent gets them when the todo closes. */
+  comments: z.array(todoCommentSchema),
   /** The user made it, so it has no turn or message, and closing it tells no one. */
   user: z.boolean(),
   /** Its place in its chat's manual order, from 0. */
@@ -174,6 +182,7 @@ export const todoSchema = z.object({
 
 export type Todo = z.output<typeof todoSchema>;
 export type TodoStep = z.output<typeof todoStepSchema>;
+export type TodoComment = z.output<typeof todoCommentSchema>;
 
 export const listTodos = defineRpc({
   name: "todos.list",
@@ -229,6 +238,20 @@ export const purgeLabels = defineRpc({
 export const setTags = defineRpc({
   name: "todos.tags",
   input: z.object({ id: z.string(), tags: z.array(z.string()) }),
+  output: z.object({ ok: z.boolean() }),
+});
+
+/** Leaves a comment on a todo. */
+export const addComment = defineRpc({
+  name: "todos.comment-add",
+  input: z.object({ id: z.string(), text: z.string().max(COMMENT_MAX) }),
+  output: z.object({ comment: todoCommentSchema.nullable() }),
+});
+
+/** Hides a comment. It stays in the store, flagged removed. */
+export const removeComment = defineRpc({
+  name: "todos.comment-remove",
+  input: z.object({ id: z.string(), commentId: z.string() }),
   output: z.object({ ok: z.boolean() }),
 });
 

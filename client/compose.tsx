@@ -7,16 +7,12 @@ import {
   Pressable,
   Text,
   View,
-  type NativeSyntheticEvent,
   type TextInput as NativeTextInput,
-  type StyleProp,
-  type TextInputKeyPressEventData,
-  type TextStyle,
 } from "react-native";
 import type { RegisteredTag } from "../shared/tags";
 import type { ListStyle, Status } from "../shared/todos";
 import { cardLook, makeCardStyles } from "./card";
-import { ActionButton, BUTTON_WEB, Hover, StatusPill, TagChip, tint } from "./parts";
+import { ActionButton, BUTTON_WEB, GrowInput, Hover, type Key, StatusPill, TagChip, tint } from "./parts";
 
 export interface NewTodoValues {
   title: string;
@@ -95,62 +91,6 @@ export function NewTodoZone({ open, ...rest }: Props) {
         <ComposeCard open={open} {...rest} />
       </View>
     </Animated.View>
-  );
-}
-
-type Key = NativeSyntheticEvent<TextInputKeyPressEventData>;
-
-/** A multiline field that grows with its text, so a wrapped title or why reads like the card's own text. */
-function GrowInput({
-  value,
-  onChange,
-  onEnter,
-  onKey,
-  placeholder,
-  color,
-  lineHeight,
-  style,
-  autoFocus,
-  maxLength,
-  field,
-}: {
-  value: string;
-  onChange(text: string): void;
-  /** Enter without Shift. */
-  onEnter(): void;
-  onKey?(event: Key): void;
-  placeholder: string;
-  color: string;
-  lineHeight: number;
-  style: StyleProp<TextStyle>;
-  autoFocus?: boolean;
-  maxLength?: number;
-  field?: (node: NativeTextInput | null) => void;
-}) {
-  const [height, setHeight] = useState(lineHeight);
-  return (
-    <TextInput
-      ref={field}
-      multiline
-      autoFocus={autoFocus}
-      value={value}
-      maxLength={maxLength}
-      onChangeText={onChange}
-      onContentSizeChange={(event) => setHeight(Math.max(lineHeight, Math.ceil(event.nativeEvent.contentSize.height)))}
-      onKeyPress={(event) => {
-        onKey?.(event);
-        const native = event.nativeEvent as { key: string; shiftKey?: boolean };
-        if (native.key === "Enter" && !native.shiftKey) {
-          event.preventDefault();
-          onEnter();
-        }
-      }}
-      placeholder={placeholder}
-      placeholderTextColor={color}
-      accessibilityLabel={placeholder}
-      scrollEnabled={false}
-      style={[style, { height, padding: 0, margin: 0, borderWidth: 0, backgroundColor: "transparent", outlineWidth: 0, textAlignVertical: "top" }]}
-    />
   );
 }
 

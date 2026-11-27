@@ -1,6 +1,7 @@
 import type { PluginHookAgent, PluginHandlerContext, PluginSettings } from "@getpaseo/plugin/server";
 import { cleanTags, normalizeTag, tagKey } from "../shared/tags";
 import {
+  COMMENT_MAX,
   firstStatus,
   normalizeStatuses,
   resolveStatus,
@@ -9,7 +10,7 @@ import {
   type TodoSettings,
   todoSettings,
 } from "../shared/todos";
-import { type StoredTodo, TodoStore } from "./store";
+import { type StoredComment, type StoredTodo, TodoStore } from "./store";
 
 type Paseo = PluginHandlerContext["paseo"];
 type Settings = PluginSettings<typeof todoSettings.schema>;
@@ -44,6 +45,15 @@ export interface UserTodoInput {
 
 /** Collapses whitespace so a title never breaks the one-line message the agent gets. */
 const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
+
+/** The comments an agent reads, oldest first: the ones the user has not removed. */
+const live = (comments: readonly StoredComment[]) => comments.filter((comment) => !comment.removed);
+
+/** "Comments:" and one "- text" line each, for the end of a message to the agent. A comment's own line breaks are indented under its dash. */
+function commentLines(comments: readonly StoredComment[]): string {
+  if (comments.length === 0) return "";
+  return `\nComments:\n${comments.map((comment) => `- ${comment.text.replace(/\n/g, "\n  ")}`).join("\n")}`;
+}
 
 /**
  * The to-do list's brain: holds proposals back until enough turns have passed, tells the agent
@@ -111,6 +121,7 @@ export class TodoService {
       .filter((todo) => todo.agentId === agentId && todo.status !== "withdrawn")
       .map((todo) => ({
         todo,
+        comments: live(todo.comments),
         state: todo.status === "pending" ? "pending" : resolveStatus(statuses, todo.statusId).label,
       }));
   }
@@ -144,6 +155,7 @@ export class TodoService {
       status: "pending",
       statusId: firstStatus(statuses, false).id,
       tags: cleanTags(input.tags ?? []),
+      comments: [],
       user: false,
       createdAt: Date.now(),
       turn: Math.max(1, this.store.turnCount(agent.id)),
@@ -252,19 +264,50 @@ export class TodoService {
     if (before.id === next.id) return true;
     todo.statusId = next.id;
     const crossed = before.closes !== next.closes && !todo.user;
-    if (crossed) todo.told = false;
+    if (crossed) {
+      todo.told = false;
+      if (next.closes) todo.closedAt = Date.now();
+    }
     await this.store.save();
     this.emit({ agentId: todo.agentId, workspaceId: todo.workspaceId, kind: "changed" });
     if (!crossed) return true;
+    // A close carries every comment; a reopen only those added since the last close.
     const text = next.closes
-      ? `[User Todos] The user closed "${todo.title}" as ${next.label}.`
-      : `[User Todos] The user reopened "${todo.title}" (now ${next.label}).`;
+      ? `[User Todos] The user marked "${todo.title}" ${next.label}.${commentLines(live(todo.comments))}`
+      : `[User Todos] The user reopened "${todo.title}" (now ${next.label}).${commentLines(
+          live(todo.comments).filter((comment) => comment.at > (todo.closedAt ?? 0)),
+        )}`;
     const told = await this.tell(paseo, todo.agentId, text);
     if (told && this.store.get(id)?.statusId === next.id) {
       todo.told = true;
       await this.store.save();
       this.emit({ agentId: todo.agentId, workspaceId: todo.workspaceId, kind: "changed" });
     }
+    return true;
+  }
+
+  /** Leaves a comment. It is kept for the agent until the todo closes, and tells no one now. */
+  async addComment(id: string, text: string) {
+    await this.store.ready;
+    const todo = this.store.get(id);
+    const clean = text.replace(/\r\n?/g, "\n").trim().slice(0, COMMENT_MAX);
+    if (!todo || todo.status === "pending" || !clean) return { comment: null };
+    const comment: StoredComment = { id: this.store.newCommentId(), text: clean, at: Date.now() };
+    todo.comments.push(comment);
+    await this.store.save();
+    this.emit({ agentId: todo.agentId, workspaceId: todo.workspaceId, kind: "changed" });
+    return { comment: { id: comment.id, text: comment.text, at: comment.at } };
+  }
+
+  /** Hides a comment from the panel and the agent. It stays in the store, flagged. */
+  async removeComment(id: string, commentId: string) {
+    await this.store.ready;
+    const todo = this.store.get(id);
+    const comment = todo?.comments.find((item) => item.id === commentId);
+    if (!todo || !comment) return false;
+    comment.removed = true;
+    await this.store.save();
+    this.emit({ agentId: todo.agentId, workspaceId: todo.workspaceId, kind: "changed" });
     return true;
   }
 
@@ -377,6 +420,7 @@ export class TodoService {
       status: "open",
       statusId: statuses.some((item) => item.id === input.statusId) ? input.statusId! : firstStatus(statuses, false).id,
       tags: cleanTags(input.tags),
+      comments: [],
       user: true,
       createdAt: Date.now(),
       turn: null,
@@ -489,10 +533,19 @@ export class TodoService {
 }
 
 function toWire(todo: StoredTodo, statuses: readonly Status[], rank: number): Todo {
-  const { withdrawReason: _reason, turnsSeen: _seen, skipFirstEnd: _skip, shown: _shown, cleared: _cleared, ...rest } = todo;
+  const {
+    withdrawReason: _reason,
+    turnsSeen: _seen,
+    skipFirstEnd: _skip,
+    shown: _shown,
+    cleared: _cleared,
+    closedAt: _closedAt,
+    ...rest
+  } = todo;
   const status = resolveStatus(statuses, todo.statusId);
   return {
     ...rest,
+    comments: live(todo.comments).map(({ id, text, at }) => ({ id, text, at })),
     callId: todo.callId ?? null,
     messageId: todo.messageId ?? null,
     listStyle: todo.listStyle ?? "bullets",

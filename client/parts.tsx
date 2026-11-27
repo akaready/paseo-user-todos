@@ -1,6 +1,17 @@
-import { Icon } from "@getpaseo/plugin/client/ui";
-import { forwardRef, useRef, useState, type ReactNode } from "react";
-import { Pressable, Text, View, type StyleProp, type ViewProps, type ViewStyle } from "react-native";
+import { Icon, TextInput } from "@getpaseo/plugin/client/ui";
+import { forwardRef, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  Pressable,
+  Text,
+  View,
+  type NativeSyntheticEvent,
+  type TextInput as NativeTextInput,
+  type StyleProp,
+  type TextInputKeyPressEventData,
+  type TextStyle,
+  type ViewProps,
+  type ViewStyle,
+} from "react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { hueInk, tagColors, type RegisteredTag } from "../shared/tags";
 import { statusIcon, type Status, type StatusColor } from "../shared/todos";
@@ -447,5 +458,71 @@ export function Swatch({
         />
       )}
     </Hover>
+  );
+}
+
+export type Key = NativeSyntheticEvent<TextInputKeyPressEventData>;
+
+/** A multiline field that grows with its text, so a wrapped title or why reads like the card's own text. */
+export function GrowInput({
+  value,
+  onChange,
+  onEnter,
+  onKey,
+  placeholder,
+  color,
+  lineHeight,
+  style,
+  autoFocus,
+  maxLength,
+  field,
+  onFocus,
+  onBlur,
+}: {
+  value: string;
+  onChange(text: string): void;
+  /** Enter without Shift. */
+  onEnter(): void;
+  onKey?(event: Key): void;
+  placeholder: string;
+  color: string;
+  lineHeight: number;
+  style: StyleProp<TextStyle>;
+  autoFocus?: boolean;
+  maxLength?: number;
+  field?: (node: NativeTextInput | null) => void;
+  onFocus?(): void;
+  onBlur?(): void;
+}) {
+  const [height, setHeight] = useState(lineHeight);
+  // An emptied field is one line again; the browser reports no smaller size once it has grown.
+  useEffect(() => {
+    if (value === "") setHeight(lineHeight);
+  }, [value, lineHeight]);
+  return (
+    <TextInput
+      ref={field}
+      multiline
+      autoFocus={autoFocus}
+      value={value}
+      maxLength={maxLength}
+      onChangeText={onChange}
+      onFocus={onFocus}
+      onBlur={onBlur}
+      onContentSizeChange={(event) => setHeight(Math.max(lineHeight, Math.ceil(event.nativeEvent.contentSize.height)))}
+      onKeyPress={(event) => {
+        onKey?.(event);
+        const native = event.nativeEvent as { key: string; shiftKey?: boolean };
+        if (native.key === "Enter" && !native.shiftKey) {
+          event.preventDefault();
+          onEnter();
+        }
+      }}
+      placeholder={placeholder}
+      placeholderTextColor={color}
+      accessibilityLabel={placeholder}
+      scrollEnabled={false}
+      style={[style, { height, padding: 0, margin: 0, borderWidth: 0, backgroundColor: "transparent", outlineWidth: 0, textAlignVertical: "top" }]}
+    />
   );
 }

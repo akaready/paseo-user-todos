@@ -20,6 +20,7 @@ import {
 } from "react-native";
 import { cleanTags, MAX_TAGS, tagKey, type RegisteredTag, type TagHue } from "../shared/tags";
 import {
+  addComment,
   addTodo,
   clearTodos,
   deleteLabel,
@@ -28,6 +29,7 @@ import {
   normalizeStatuses,
   paseoLabels,
   purgeLabels,
+  removeComment,
   renameLabel,
   reorderTodos,
   resolveStatus,
@@ -392,6 +394,8 @@ export function TodoPanel({
   );
   const changeStatus = useRpc(setStatus);
   const changeTags = useRpc(setTags);
+  const addNote = useRpc(addComment);
+  const dropNote = useRpc(removeComment);
   const clear = useRpc(clearTodos);
   const add = useRpc(addTodo);
   const saveOrder = useRpc(reorderTodos);
@@ -564,6 +568,24 @@ export function TodoPanel({
       "end",
     );
 
+
+  const comment = (todo: Todo, text: string) => {
+    void addNote({ id: todo.id, text })
+      .then(({ comment: saved }) => {
+        if (!saved) return void refresh();
+        patch(todo.id, (current) =>
+          current.comments.some((item) => item.id === saved.id)
+            ? current
+            : { ...current, comments: [...current.comments, saved] },
+        );
+      })
+      .catch(() => void refresh());
+  };
+
+  const uncomment = (todo: Todo, commentId: string) => {
+    patch(todo.id, (current) => ({ ...current, comments: current.comments.filter((item) => item.id !== commentId) }));
+    void dropNote({ id: todo.id, commentId }).catch(() => void refresh());
+  };
 
   const editTags = (todo: Todo, tags: string[]) => {
     patch(todo.id, (current) => ({ ...current, tags }));
@@ -899,6 +921,9 @@ export function TodoPanel({
       ghost={ghost}
       guard={guard}
       onExpand={() => expand(todo.id)}
+      onOpen={() => setExpanded((current) => new Set(current).add(todo.id))}
+      onComment={(text) => comment(todo, text)}
+      onUncomment={(commentId) => uncomment(todo, commentId)}
       onDone={(origin) => choose(todo, closingStatus, origin)}
       onLink={(url) => void openExternalUrl(url).catch(() => {})}
       onJump={() => jump(todo)}

@@ -4,11 +4,22 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Todo } from "../shared/todos";
 
+export interface StoredComment {
+  id: string;
+  text: string;
+  at: number;
+  removed?: boolean;
+}
+
 /**
  * A todo as stored. `pending` ones are held back until enough turns have passed. Whether it is
  * done is its `statusId`'s business, not its lifecycle's.
  */
-export interface StoredTodo extends Omit<Todo, "status" | "closed" | "rank" | "listStyle"> {
+export interface StoredTodo extends Omit<Todo, "status" | "closed" | "rank" | "listStyle" | "comments"> {
+  /** Every comment, removed ones included: removing only sets the flag. */
+  comments: StoredComment[];
+  /** When the todo last moved into a closing status, so a reopen can pass on what was said since. */
+  closedAt?: number;
   /** Absent on todos saved before it existed, which read as bullets. */
   listStyle?: Todo["listStyle"];
   status: "pending" | "open" | "withdrawn";
@@ -66,6 +77,7 @@ function migrate(todo: StoredTodo): StoredTodo {
     statusId: old.statusId ?? (done ? "done" : "do"),
     tags: old.tags ?? [],
     user: old.user ?? false,
+    comments: old.comments ?? [],
   };
 }
 
@@ -169,6 +181,10 @@ export class TodoStore {
     do id = `todo_${randomBytes(4).toString("hex")}`;
     while (this.data.todos.some((todo) => todo.id === id));
     return id;
+  }
+
+  newCommentId(): string {
+    return `c_${randomBytes(4).toString("hex")}`;
   }
 
   /** Counts a turn started in a chat and returns its number. */

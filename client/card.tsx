@@ -1,19 +1,24 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { Icon } from "@getpaseo/plugin/client/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Easing, Pressable, Text, View, type ViewStyle } from "react-native";
+import { Animated, Easing, Pressable, Text, View, type TextInput as NativeTextInput, type ViewStyle } from "react-native";
 import { useAgent } from "@getpaseo/plugin/client";
 import type { RegisteredTag } from "../shared/tags";
-import { describeLink, type Status, type Todo } from "../shared/todos";
+import { COMMENT_MAX, describeLink, type Status, type Todo } from "../shared/todos";
 import { DragCard } from "./drag";
-import { Hover, mix, StatusPill, statusInk, TagChip, tint } from "./parts";
+import { GrowInput, Hover, mix, StatusPill, statusInk, TagChip, tint } from "./parts";
 
 const pad = (value: number) => String(value).padStart(2, "0");
 
+/** A time of day, "11:20". */
+function clock(ms: number) {
+  const at = new Date(ms);
+  return `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+}
+
 /** The time the todo was made, "11:20". */
 export function whenOf(todo: Todo) {
-  const at = new Date(todo.createdAt);
-  return `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  return clock(todo.createdAt);
 }
 
 /** The full date and time, for anyone who hovers where hover exists. */
@@ -102,6 +107,24 @@ export function makeCardStyles(theme: PluginTheme) {
       rowGap: 6,
       minHeight: 24,
     },
+    // Comments sit under the steps, outside the card's press target so the input can be clicked.
+    comments: { gap: 4, marginTop: -6, paddingHorizontal: 14, paddingBottom: 16 },
+    comment: { flexDirection: "row" as const, alignItems: "flex-start" as const, gap: 6 },
+    commentText: { flex: 1, minWidth: 0, color: colors.foreground, fontSize: 12.5, lineHeight: 18 },
+    commentTime: { color: colors.foregroundMuted, fontSize: 11.5 },
+    commentInput: { color: colors.foreground, fontSize: 12.5, lineHeight: 18 },
+    commentRemove: { width: 18, height: 18, borderRadius: 4, alignItems: "center" as const, justifyContent: "center" as const },
+    commentButton: {
+      minWidth: 24,
+      height: 24,
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
+      justifyContent: "center" as const,
+      gap: 3,
+      paddingHorizontal: 5,
+      borderRadius: 6,
+    },
+    commentCount: { color: colors.foregroundMuted, fontSize: 11.5 },
     tagButton: { width: 24, height: 24, alignItems: "center" as const, justifyContent: "center" as const, borderRadius: 6 },
   };
 }
@@ -158,6 +181,11 @@ export interface CardProps {
   /** Wraps a press so the click that ends a drag does nothing. */
   guard<Args extends unknown[]>(run: (...args: Args) => void): (...args: Args) => void;
   onExpand(): void;
+  /** Expands the card without toggling it, so the comment input can be reached. */
+  onOpen(): void;
+  /** Leaves a comment on the todo. */
+  onComment(text: string): void;
+  onUncomment(commentId: string): void;
   /** A swipe right past the threshold: mark the todo done. `origin` is where the confetti starts. */
   onDone(origin: View | null): void;
   onLink(url: string): void;
@@ -183,6 +211,9 @@ export function TodoCard({
   ghost = false,
   guard,
   onExpand,
+  onOpen,
+  onComment,
+  onUncomment,
   onDone,
   onLink,
   onJump,
@@ -192,6 +223,12 @@ export function TodoCard({
   const { colors } = theme;
   const styles = useMemo(() => makeCardStyles(theme), [theme]);
   const tagButton = useRef<View>(null);
+  const commentField = useRef<NativeTextInput>(null);
+  const [draft, setDraft] = useState("");
+  // While the input has focus, a pointer dragging across it selects text: it never swipes or drags the card.
+  const [typing, setTyping] = useState(false);
+  // The comment button was pressed: once the card is open, the input takes focus.
+  const [wantsFocus, setWantsFocus] = useState(false);
   // Swiping right: the content follows the pointer over a green reveal, and past the threshold the
   // todo is marked done. Short of it, the content springs back.
   const swipe = useRef(new Animated.Value(0)).current;
@@ -209,6 +246,12 @@ export function TodoCard({
   // The card's own hover. It stays on while the pointer is over a chip or control inside the card.
   const [overCard, setOverCard] = useState(false);
   const [overJump, setOverJump] = useState(false);
+
+  useEffect(() => {
+    if (!wantsFocus || !expanded) return;
+    commentField.current?.focus();
+    setWantsFocus(false);
+  }, [wantsFocus, expanded]);
 
   useEffect(() => {
     if (!leaving) return;
@@ -317,12 +360,12 @@ export function TodoCard({
     >
       <DragCard
         style={{ position: "relative" }}
-        mouse={ghost ? false : drag.mouse}
+        mouse={ghost || typing ? false : drag.mouse}
         armed={ghost ? false : drag.armed}
         onStart={drag.onStart}
         onMove={drag.onMove}
         onEnd={drag.onEnd}
-        swipeable={!ghost}
+        swipeable={!ghost && !typing}
         onSwipe={(dx) => swipe.setValue(Math.max(0, dx))}
         onSwipeEnd={onSwipeEnd}
       >
@@ -352,7 +395,7 @@ export function TodoCard({
                 pill, then the expand chevron at the far right when there is something to reveal. The title wraps before it. */}
             <View style={{ marginTop: -1, flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
               <StatusPill theme={theme} status={status} neutral={plain} onMenu={guard(onMenu)} />
-              {todo.steps.length > 0 ? (
+              {todo.steps.length > 0 || todo.comments.length > 0 ? (
                 <Hover>
                   {(over) => (
                     <Pressable
@@ -412,6 +455,53 @@ export function TodoCard({
             </View>
           ) : null}
         </Pressable>
+        {expanded ? (
+          <View style={styles.comments}>
+            {todo.comments.map((comment) => (
+              <Hover key={comment.id}>
+                {(over) => (
+                  <View style={styles.comment}>
+                    <Text style={styles.commentText}>
+                      {comment.text}
+                      <Text style={styles.commentTime}>{`  ${clock(comment.at)}`}</Text>
+                    </Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Remove comment"
+                      onPress={guard(() => onUncomment(comment.id))}
+                      style={[styles.commentRemove, { opacity: over || (!ghost && !drag.mouse) ? 1 : 0 }, POINTER]}
+                    >
+                      <Icon name="X" size={12} color={colors.foregroundMuted} />
+                    </Pressable>
+                  </View>
+                )}
+              </Hover>
+            ))}
+            <GrowInput
+              field={(node) => {
+                commentField.current = node;
+              }}
+              value={draft}
+              onFocus={() => setTyping(true)}
+              onBlur={() => setTyping(false)}
+              maxLength={COMMENT_MAX}
+              onChange={setDraft}
+              onEnter={() => {
+                const text = draft.trim();
+                if (!text) return;
+                setDraft("");
+                onComment(text);
+              }}
+              onKey={(event) => {
+                if (event.nativeEvent.key === "Escape") commentField.current?.blur();
+              }}
+              placeholder="Comment"
+              color={colors.foregroundMuted}
+              lineHeight={18}
+              style={[styles.commentInput]}
+            />
+          </View>
+        ) : null}
         {todo.tags.length > 0 ? (
           <View style={[styles.labelsRow, { borderTopColor: edge }]}>
             {todo.tags.map((tag) => (
@@ -437,6 +527,23 @@ export function TodoCard({
               </Pressable>
             )}
           </Hover>
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <Hover>
+            {(over) => (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Comments"
+                onPress={guard(() => {
+                  setWantsFocus(true);
+                  onOpen();
+                })}
+                style={[styles.commentButton, over && { backgroundColor: tint(colors.foreground, 0.07, colors.surface2) }]}
+              >
+                <Icon name="MessageSquare" size={13} color={over ? colors.foreground : colors.foregroundMuted} />
+                {todo.comments.length > 0 ? <Text style={styles.commentCount}>{todo.comments.length}</Text> : null}
+              </Pressable>
+            )}
+          </Hover>
           <Hover>
             {(over) => (
               <Pressable
@@ -450,6 +557,7 @@ export function TodoCard({
               </Pressable>
             )}
           </Hover>
+          </View>
         </View>
         </Animated.View>
       </DragCard>
