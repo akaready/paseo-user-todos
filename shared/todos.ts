@@ -113,7 +113,10 @@ export const todoSettings = defineSettings({
     group: z.enum(GROUPS).default("chat"),
     /** The list, in the order the dropdown shows it. The first open one is what a new todo starts as. */
     statuses: z.array(statusSchema).min(2).default(DEFAULT_STATUSES),
-    /** The labels menu's registry: each tag the user made, with the color they picked. */
+    /**
+     * The plugin's own record of labels made from the panel: each name with the color the user picked.
+     * Paseo gives a created label violet and the plugin API cannot recolor it, so the chosen color lives here.
+     */
     tags: z.array(z.object({ name: z.string().min(1).max(24), color: z.enum(TAG_HUES) })).default([]),
   }),
 });
@@ -200,38 +203,27 @@ export const setStatus = defineRpc({
   output: z.object({ ok: z.boolean() }),
 });
 
-/** Paseo's own workspace labels, read from its file, in its order. Read-only here. */
+/** Paseo's own workspace labels, read from its file, in its order: the only labels there are. Read-only here. */
 export const paseoLabels = defineRpc({
   name: "todos.paseo-labels",
   input: z.object({}),
   output: z.object({ labels: z.array(z.object({ name: z.string(), color: z.enum(TAG_HUES) })) }),
 });
 
-/** How many todos carry each label, host-wide, for Manage labels. Cleared todos are not counted. */
-export const labelCounts = defineRpc({
-  name: "todos.label-counts",
-  input: z.object({}),
-  output: z.object({ counts: z.array(z.object({ name: z.string(), count: z.number() })) }),
+/**
+ * Makes a label in Paseo without keeping it on anything: the plugin API can only create one by
+ * assigning it to a workspace, so it is assigned to this workspace and taken off again at once.
+ */
+export const createLabel = defineRpc({
+  name: "todos.label-create",
+  input: z.object({ workspaceId: z.string(), name: z.string() }),
+  output: z.object({ name: z.string().nullable(), error: z.string().optional() }),
 });
 
-/** Renames a label on every todo that has it. */
-export const renameLabel = defineRpc({
-  name: "todos.label-rename",
-  input: z.object({ from: z.string(), to: z.string(), color: z.string().nullable().optional() }),
-  output: z.object({ changed: z.number(), error: z.string().optional() }),
-});
-
-/** Takes a label off every todo that has it. */
-export const deleteLabel = defineRpc({
-  name: "todos.label-delete",
-  input: z.object({ name: z.string(), color: z.string().nullable().optional() }),
-  output: z.object({ changed: z.number() }),
-});
-
-/** Records that unused registry entries were removed. No todo carries them, so none is changed. */
-export const purgeLabels = defineRpc({
-  name: "todos.label-purge",
-  input: z.object({ names: z.array(z.string()), colors: z.array(z.string().nullable()).optional() }),
+/** Archives a todo: it leaves the list (flagged cleared, never deleted) and the agent that proposed it is told. */
+export const archiveTodo = defineRpc({
+  name: "todos.archive",
+  input: z.object({ id: z.string() }),
   output: z.object({ ok: z.boolean() }),
 });
 

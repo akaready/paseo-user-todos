@@ -3,7 +3,7 @@ import { Icon } from "@getpaseo/plugin/client/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Easing, Pressable, Text, View, type TextInput as NativeTextInput, type ViewStyle } from "react-native";
 import { useAgent } from "@getpaseo/plugin/client";
-import type { RegisteredTag } from "../shared/tags";
+import { tagKey, type RegisteredTag } from "../shared/tags";
 import { COMMENT_MAX, describeLink, type Status, type Todo } from "../shared/todos";
 import { DragCard } from "./drag";
 import { GrowInput, Hover, mix, StatusPill, statusInk, TagChip, tint } from "./parts";
@@ -188,6 +188,8 @@ export interface CardProps {
   onUncomment(commentId: string): void;
   /** A swipe right past the threshold: mark the todo done. `origin` is where the confetti starts. */
   onDone(origin: View | null): void;
+  /** A swipe left past the threshold: archive the todo. */
+  onArchive(): void;
   onLink(url: string): void;
   onJump(): void;
   onMenu(anchor: View | null): void;
@@ -215,6 +217,7 @@ export function TodoCard({
   onComment,
   onUncomment,
   onDone,
+  onArchive,
   onLink,
   onJump,
   onMenu,
@@ -223,6 +226,8 @@ export function TodoCard({
   const { colors } = theme;
   const styles = useMemo(() => makeCardStyles(theme), [theme]);
   const tagButton = useRef<View>(null);
+  // Only Paseo's labels show; any other tag a todo carries stays in the store, unseen.
+  const shownTags = todo.tags.filter((tag) => registry.some((label) => tagKey(label.name) === tagKey(tag)));
   const commentField = useRef<NativeTextInput>(null);
   const [draft, setDraft] = useState("");
   // While the input has focus, a pointer dragging across it selects text: it never swipes or drags the card.
@@ -305,12 +310,14 @@ export function TodoCard({
 
   const onSwipeEnd = (dx: number) => {
     drag.swiped();
-    // Past 90px, or 35% of a narrow card, counts as a swipe.
+    // Past 90px, or 35% of a narrow card, counts as a swipe: right marks it done, left archives it.
     const need = Math.min(90, width.current * 0.35);
-    if (dx >= need) {
-      onDone(revealIcon.current);
+    if (dx >= need || dx <= -need) {
+      const toward = dx > 0 ? 1 : -1;
+      if (toward > 0) onDone(revealIcon.current);
+      else onArchive();
       if (reduceMotion) swipe.setValue(0);
-      else Animated.timing(swipe, { toValue: width.current, duration: 160, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
+      else Animated.timing(swipe, { toValue: toward * width.current, duration: 160, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
     } else if (reduceMotion) swipe.setValue(0);
     else Animated.spring(swipe, { toValue: 0, overshootClamping: true, bounciness: 0, useNativeDriver: false }).start();
   };
@@ -366,18 +373,35 @@ export function TodoCard({
         onMove={drag.onMove}
         onEnd={drag.onEnd}
         swipeable={!ghost && !typing}
-        onSwipe={(dx) => swipe.setValue(Math.max(0, dx))}
+        onSwipe={(dx) => swipe.setValue(Math.max(-width.current, Math.min(width.current, dx)))}
         onSwipeEnd={onSwipeEnd}
       >
-        {/* Behind the content: the green the swipe reveals, with its check on the left. */}
-        <View
+        {/* Behind the content: the green a swipe right reveals, with its check on the left, and the
+            muted neutral a swipe left reveals, with its archive box on the right. */}
+        <Animated.View
           pointerEvents="none"
-          style={{ position: "absolute", left: 0, top: 0, right: 0, bottom: 0, justifyContent: "center", paddingLeft: 16, backgroundColor: mix(base, colors.statusSuccess, 0.22) }}
+          style={{
+            position: "absolute", left: 0, top: 0, right: 0, bottom: 0, justifyContent: "center", paddingLeft: 16,
+            backgroundColor: mix(base, colors.statusSuccess, 0.22),
+            opacity: swipe.interpolate({ inputRange: [-1, 0, 1], outputRange: [0, 0, 1], extrapolate: "clamp" }),
+          }}
         >
           <View ref={revealIcon} style={{ width: 20, height: 20, alignItems: "center", justifyContent: "center" }}>
             <Icon name="CircleCheck" size={18} color={colors.statusSuccess} />
           </View>
-        </View>
+        </Animated.View>
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            position: "absolute", left: 0, top: 0, right: 0, bottom: 0, justifyContent: "center", alignItems: "flex-end", paddingRight: 16,
+            backgroundColor: mix(base, colors.foregroundMuted, 0.18),
+            opacity: swipe.interpolate({ inputRange: [-1, 0, 1], outputRange: [1, 0, 0], extrapolate: "clamp" }),
+          }}
+        >
+          <View style={{ width: 20, height: 20, alignItems: "center", justifyContent: "center" }}>
+            <Icon name="Archive" size={18} color={colors.foregroundMuted} />
+          </View>
+        </Animated.View>
         <Animated.View style={{ backgroundColor: ground, transform: [{ translateX: swipe }] }}>
         <Pressable
           accessibilityRole="button"
@@ -502,9 +526,9 @@ export function TodoCard({
             />
           </View>
         ) : null}
-        {todo.tags.length > 0 ? (
+        {shownTags.length > 0 ? (
           <View style={[styles.labelsRow, { borderTopColor: edge }]}>
-            {todo.tags.map((tag) => (
+            {shownTags.map((tag) => (
               <TagChip key={tag} theme={theme} name={tag} registry={registry} />
             ))}
           </View>

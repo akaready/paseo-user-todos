@@ -6,15 +6,13 @@ import { INSTRUCTIONS, todoTools } from "./server/tools";
 import {
   addComment,
   addTodo,
+  archiveTodo,
   AGENT_KEY,
   clearTodos,
-  deleteLabel,
-  labelCounts,
+  createLabel,
   listTodos,
   paseoLabels,
-  purgeLabels,
   removeComment,
-  renameLabel,
   reorderTodos,
   setStatus,
   setTags,
@@ -65,16 +63,14 @@ export default function contribute(server: PluginServerContext) {
   server.handle(listTodos, (input) => service.list(input));
   server.handle(setStatus, async ({ id, statusId }, { paseo }) => ({ ok: await service.setStatus(id, statusId, paseo) }));
   server.handle(paseoLabels, async () => ({ labels: await readPaseoLabels() }));
-  server.handle(labelCounts, () => service.labelCounts());
-  server.handle(renameLabel, ({ from, to, color }) => service.renameLabel(from, to, color));
-  server.handle(deleteLabel, ({ name, color }) => service.deleteLabel(name, color));
-  server.handle(purgeLabels, async ({ names, colors }) => ({ ok: await service.purgeLabels(names, colors) }));
   server.handle(setTags, async ({ id, tags }) => ({ ok: await service.setTags(id, tags) }));
   server.handle(reorderTodos, async ({ agentId, ids }) => ({ ok: await service.reorder(agentId, ids) }));
   server.handle(addComment, ({ id, text }) => service.addComment(id, text));
   server.handle(removeComment, async ({ id, commentId }) => ({ ok: await service.removeComment(id, commentId) }));
+  server.handle(createLabel, ({ workspaceId, name }, { paseo }) => service.createLabel(workspaceId, name, paseo));
+  server.handle(archiveTodo, async ({ id }, { paseo }) => ({ ok: await service.archive(id, paseo) }));
   server.handle(addTodo, async (input) => service.addOwn(input));
-  server.handle(clearTodos, async (input) => ({ cleared: await service.clear(input) }));
+  server.handle(clearTodos, async (input, { paseo }) => ({ cleared: await service.clear(input, paseo) }));
   server.handle(watchTodos, (_input, { push, signal }) => {
     const stop = service.subscribe((event) => void push(event).catch(() => {}));
     signal.addEventListener("abort", stop, { once: true });

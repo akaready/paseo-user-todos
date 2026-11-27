@@ -43,26 +43,9 @@ interface StoreFile {
   opened: Record<string, true>;
   /** Each chat's manual order of todo IDs, first on top. */
   order: Record<string, string[]>;
-  /** What was done to labels, with the todos it touched, so nothing about a rename or delete is untraceable. */
-  labelEvents: LabelEvent[];
 }
 
-/** One change made through Manage labels. The registry itself lives in settings; this is the trail. */
-export interface LabelEvent {
-  /** Milliseconds since the epoch. */
-  at: number;
-  kind: "rename" | "delete" | "purge";
-  /** The label's name before the change, or every name a purge removed. */
-  labels: string[];
-  /** The new name, for a rename. */
-  to?: string;
-  /** The color each label had in the registry, in the order of `labels`, so a removal can be undone by hand. */
-  colors?: (string | null)[];
-  /** Every todo that carried the label and was changed, cleared ones included. */
-  todoIds: string[];
-}
-
-const empty = (): StoreFile => ({ version: 1, todos: [], turns: {}, opened: {}, order: {}, labelEvents: [] });
+const empty = (): StoreFile => ({ version: 1, todos: [], turns: {}, opened: {}, order: {} });
 
 /**
  * Todos saved before statuses existed carry `status: "done"` and no tags: done becomes DONE, and
@@ -126,15 +109,6 @@ export class TodoStore {
     const hit = this.all().filter(match);
     for (const todo of hit) todo.cleared = true;
     return hit;
-  }
-
-  /** Every todo in the file, cleared ones too: a label change reaches all of them. */
-  every(): readonly StoredTodo[] {
-    return this.data.todos;
-  }
-
-  logLabelEvent(event: LabelEvent) {
-    this.data.labelEvents.push(event);
   }
 
   get(id: string): StoredTodo | undefined {

@@ -8,7 +8,7 @@ const PROPOSE = `Call this whenever the user must do something only they can do 
 
 Never use it for chores you could do yourself or with the tools you have, for trivia, or for something the user is about to answer in this chat.
 
-Write the title short and imperative ("Approve the DNS change at your registrar"). "why" is one or two sentences on why you cannot do it. Add "steps" only when there is more than one thing to do: a short list (2 to 6 items, each one action). Set "listStyle" to "numbers" when the order matters and leave it as bullets otherwise. Give no steps at all when one sentence of "why" is enough. Include the exact links they need (the page to open, not a home page). Do not add a step that tells you when they are done: you are told automatically when the user closes the todo. Call list_user_todos first so you do not propose the same task twice. Add up to three short "tags" (one or two words each, such as "billing" or "dns") only when they help the user sort their list; most todos need none.
+Write the title short and imperative ("Approve the DNS change at your registrar"). "why" is one or two sentences on why you cannot do it. Add "steps" only when there is more than one thing to do: a short list (2 to 6 items, each one action). Set "listStyle" to "numbers" when the order matters and leave it as bullets otherwise. Give no steps at all when one sentence of "why" is enough. Include the exact links they need (the page to open, not a home page). Do not add a step that tells you when they are done: you are told automatically when the user closes the todo. Call list_user_todos first so you do not propose the same task twice.
 
 The todo is held back and appears only after the user has had a turn or two to answer you in chat. If the user resolves it in chat first, call withdraw_user_todo. Returns the todo's id.`;
 
@@ -55,11 +55,6 @@ export function todoTools(service: TodoService) {
           .max(8)
           .default([])
           .describe("The pages the user needs."),
-        tags: z
-          .array(z.string().trim().min(1).max(24))
-          .max(4)
-          .default([])
-          .describe("Optional short labels, one or two words each. Leave empty unless they help sort the list."),
       }),
       async execute(input, { agent, paseo }) {
         const { id, duplicate } = await service.propose(agent, paseo, input);

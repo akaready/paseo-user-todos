@@ -16,7 +16,7 @@ interface DragCardProps extends ViewProps {
   /** How far the pointer has moved down since the card was picked up; negative is up. */
   onMove(dy: number): void;
   onEnd(dy: number): void;
-  /** A swipe to the right is on: how far the pointer has moved right since it began. */
+  /** A swipe sideways is on: how far the pointer has moved right (negative: left) since it began. */
   onSwipe(dx: number): void;
   onSwipeEnd(dx: number): void;
   /** Whether this card can be swiped at all. */
@@ -44,8 +44,8 @@ export function DragCard({ mouse, armed, onStart, onMove, onEnd, onSwipe, onSwip
           mode.current = "drag";
           return true;
         }
-        // Mostly rightward is a swipe, with a mouse or a finger. Mostly vertical is a reorder drag.
-        if (l.swipeable && dx > THRESHOLD && dx > Math.abs(dy)) {
+        // Mostly sideways is a swipe, with a mouse or a finger. Mostly vertical is a reorder drag.
+        if (l.swipeable && Math.abs(dx) > THRESHOLD && Math.abs(dx) > Math.abs(dy)) {
           mode.current = "swipe";
           return true;
         }

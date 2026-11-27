@@ -7,7 +7,6 @@ import {
   MAX_TAG_LENGTH,
   normalizeTag,
   TAG_HUES,
-  tagHue,
   tagKey,
   type RegisteredTag,
   type TagHue,
@@ -229,29 +228,21 @@ export function LabelsMenu({
   theme,
   rect,
   bounds,
-  registry,
-  all,
+  labels,
   active,
-  full,
   onToggle,
   onCreate,
-  onManage,
   onClose,
 }: {
   theme: PluginTheme;
   rect: MenuState["rect"];
   bounds: { width: number; height: number };
-  registry: readonly RegisteredTag[];
-  /** Every label there is: the registry first, then tags the agents made. */
-  all: readonly string[];
-  /** The tags on this todo. */
+  /** Paseo's labels first, then the ones the plugin recorded, with the colors to show. */
+  labels: readonly RegisteredTag[];
+  /** The labels on this todo. */
   active: readonly string[];
-  /** This todo is at its tag limit: no more can go on. */
-  full: boolean;
   onToggle(name: string): void;
   onCreate(name: string, color: TagHue): void;
-  /** Opens Manage labels. */
-  onManage(): void;
   onClose(): void;
 }) {
   const { colors } = theme;
@@ -282,37 +273,24 @@ export function LabelsMenu({
     >
       {page === "list" ? (
         <>
-          {all.length > 0 ? (
+          {labels.length > 0 ? (
             <ScrollView style={{ maxHeight: LIST_MAX }}>
-              {all.map((tag) => {
-                const on = active.some((other) => tagKey(other) === tagKey(tag));
-                return (
-                  <Row
-                    key={tag}
-                    theme={theme}
-                    label={tag}
-                    selected={on}
-                    disabled={full && !on}
-                    leading={
-                      <View style={{ width: 10, height: 10, borderRadius: 9999, backgroundColor: hueInk(tagHue(tag, registry), dark) }} />
-                    }
-                    onPress={() => onToggle(tag)}
-                  />
-                );
-              })}
+              {labels.map((tag) => (
+                <Row
+                  key={tag.name}
+                  theme={theme}
+                  label={tag.name}
+                  selected={active.some((other) => tagKey(other) === tagKey(tag.name))}
+                  leading={<View style={{ width: 10, height: 10, borderRadius: 9999, backgroundColor: hueInk(tag.color, dark) }} />}
+                  onPress={() => onToggle(tag.name)}
+                />
+              ))}
             </ScrollView>
           ) : null}
-          {all.length > 0 ? <Separator theme={theme} /> : null}
-          <Row
-            theme={theme}
-            label="Manage labels"
-            leading={<Icon name="Settings2" size={14} color={colors.foregroundMuted} />}
-            onPress={onManage}
-          />
+          {labels.length > 0 ? <Separator theme={theme} /> : null}
           <Row
             theme={theme}
             label="Create label"
-            disabled={full}
             leading={<Icon name="Plus" size={14} color={colors.foregroundMuted} />}
             trailing={<Icon name="ChevronRight" size={14} color={colors.foregroundMuted} />}
             onPress={() => setPage("create")}

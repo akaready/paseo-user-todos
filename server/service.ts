@@ -1,5 +1,6 @@
 import type { PluginHookAgent, PluginHandlerContext, PluginSettings } from "@getpaseo/plugin/server";
 import { cleanTags, normalizeTag, tagKey } from "../shared/tags";
+import { readPaseoLabels } from "./paseo-labels";
 import {
   COMMENT_MAX,
   firstStatus,
@@ -27,7 +28,6 @@ export interface ProposalInput {
   steps: string[];
   listStyle?: "bullets" | "numbers";
   links: { url: string; label?: string }[];
-  tags?: string[];
 }
 
 export interface UserTodoInput {
@@ -154,7 +154,7 @@ export class TodoService {
       links: input.links.map(({ url, label }) => ({ url, label: label ? oneLine(label) : undefined })),
       status: "pending",
       statusId: firstStatus(statuses, false).id,
-      tags: cleanTags(input.tags ?? []),
+      tags: [],
       comments: [],
       user: false,
       createdAt: Date.now(),
@@ -313,62 +313,6 @@ export class TodoService {
 
   // ---- labels --------------------------------------------------------------------------
 
-  /** How many todos carry each label, by the spelling in use, host-wide. */
-  async labelCounts() {
-    await this.store.ready;
-    const seen = new Map<string, { name: string; count: number }>();
-    for (const todo of this.store.all()) {
-      for (const tag of todo.tags) {
-        const entry = seen.get(tagKey(tag)) ?? { name: tag, count: 0 };
-        entry.count++;
-        seen.set(tagKey(tag), entry);
-      }
-    }
-    return { counts: [...seen.values()] };
-  }
-
-  private touched(todos: readonly StoredTodo[]) {
-    const seen = new Set<string>();
-    for (const todo of todos) {
-      const key = `${todo.agentId}|${todo.workspaceId}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      this.emit({ agentId: todo.agentId, workspaceId: todo.workspaceId, kind: "changed" });
-    }
-  }
-
-  async renameLabel(from: string, to: string, color?: string | null) {
-    await this.store.ready;
-    const name = normalizeTag(to);
-    if (!name) return { changed: 0, error: "A label needs a name." };
-    const hit = this.store.every().filter((todo) => todo.tags.some((tag) => tagKey(tag) === tagKey(from)));
-    for (const todo of hit) {
-      todo.tags = cleanTags(todo.tags.map((tag) => (tagKey(tag) === tagKey(from) ? name : tag)));
-    }
-    this.store.logLabelEvent({ at: Date.now(), kind: "rename", labels: [from], to: name, colors: [color ?? null], todoIds: hit.map((todo) => todo.id) });
-    await this.store.save();
-    this.touched(hit);
-    return { changed: hit.length };
-  }
-
-  async deleteLabel(name: string, color?: string | null) {
-    await this.store.ready;
-    const hit = this.store.every().filter((todo) => todo.tags.some((tag) => tagKey(tag) === tagKey(name)));
-    for (const todo of hit) todo.tags = todo.tags.filter((tag) => tagKey(tag) !== tagKey(name));
-    this.store.logLabelEvent({ at: Date.now(), kind: "delete", labels: [name], colors: [color ?? null], todoIds: hit.map((todo) => todo.id) });
-    await this.store.save();
-    this.touched(hit);
-    return { changed: hit.length };
-  }
-
-  async purgeLabels(names: readonly string[], colors?: readonly (string | null)[]) {
-    await this.store.ready;
-    if (names.length === 0) return true;
-    this.store.logLabelEvent({ at: Date.now(), kind: "purge", labels: [...names], colors: colors ? [...colors] : undefined, todoIds: [] });
-    await this.store.save();
-    return true;
-  }
-
   async setTags(id: string, tags: readonly string[]) {
     await this.store.ready;
     const todo = this.store.get(id);
@@ -439,12 +383,61 @@ export class TodoService {
   }
 
   /**
-   * Clears a chat's todos, or a workspace's, whatever their state. They are flagged, not deleted,
-   * and the agent is not told: this is housekeeping, not an answer.
+   * Creates a label in Paseo. The plugin API has no create-only call, so the label is assigned to
+   * `workspaceId` and unassigned straight away; once the first call has gone through, the second is
+   * retried until it does, so nothing stays on the workspace. Returns the name Paseo knows it by.
    */
-  async clear(filter: { workspaceId?: string; agentId?: string }) {
+  async createLabel(workspaceId: string, raw: string, paseo: Paseo) {
+    const name = normalizeTag(raw);
+    if (!name) return { name: null, error: "A label needs a name." };
+    const known = (await readPaseoLabels()).find((label) => tagKey(label.name) === tagKey(name));
+    if (known) return { name: known.name };
+    const ref = paseo.workspaces.ref(workspaceId);
+    try {
+      await ref.setLabel(name, { assigned: true });
+    } catch (error) {
+      console.error("Could not create a label", error);
+      return { name: null, error: "Paseo did not create the label." };
+    }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await ref.setLabel(name, { assigned: false });
+        return { name };
+      } catch (error) {
+        console.error(`Could not take "${name}" off the workspace again`, error);
+      }
+    }
+    return { name, error: "The label was created but is still on the workspace." };
+  }
+
+  /**
+   * Archives a todo: flagged cleared like Clear does, so it leaves every list and nothing is deleted.
+   * The agent hears about it when it proposed the todo and the todo was not already closed.
+   */
+  async archive(id: string, paseo: Paseo) {
+    await this.store.ready;
+    const todo = this.store.get(id);
+    if (!todo) return false;
+    const { statuses } = await this.values();
+    const closed = todo.status === "open" && resolveStatus(statuses, todo.statusId).closes;
+    todo.cleared = true;
+    await this.store.save();
+    this.emit({ agentId: todo.agentId, workspaceId: todo.workspaceId, kind: "changed" });
+    if (!todo.user && !closed && todo.status !== "withdrawn") {
+      await this.tell(paseo, todo.agentId, `[User Todos] The user archived "${todo.title}".${commentLines(live(todo.comments))}`);
+    }
+    return true;
+  }
+
+  /**
+   * Clears a chat's todos, or a workspace's, whatever their state. They are flagged, not deleted.
+   * Each affected chat is told once, naming the todos its agent proposed that were still open or
+   * waiting, with their comments; todos the user made, and ones already closed, are left out.
+   */
+  async clear(filter: { workspaceId?: string; agentId?: string }, paseo: Paseo) {
     await this.store.ready;
     if (!filter.workspaceId && !filter.agentId) return 0;
+    const { statuses } = await this.values();
     const hit = this.store.clear(
       (todo) =>
         (!filter.workspaceId || todo.workspaceId === filter.workspaceId) &&
@@ -454,6 +447,22 @@ export class TodoService {
     await this.store.save();
     for (const agentId of new Set(hit.map((todo) => todo.agentId))) {
       this.emit({ agentId, workspaceId: hit.find((todo) => todo.agentId === agentId)!.workspaceId, kind: "changed" });
+    }
+    const open = hit
+      .filter(
+        (todo) =>
+          !todo.user &&
+          (todo.status === "pending" || (todo.status === "open" && !resolveStatus(statuses, todo.statusId).closes)),
+      )
+      .sort((a, b) => a.createdAt - b.createdAt);
+    for (const agentId of new Set(open.map((todo) => todo.agentId))) {
+      const lines = open
+        .filter((todo) => todo.agentId === agentId)
+        .flatMap((todo) => [
+          `- "${todo.title}"`,
+          ...live(todo.comments).map((comment) => `  - ${comment.text.replace(/\n/g, "\n    ")}`),
+        ]);
+      await this.tell(paseo, agentId, `[User Todos] The user cleared these todos:\n${lines.join("\n")}`);
     }
     return hit.length;
   }
@@ -511,11 +520,18 @@ export class TodoService {
   }
 
   /**
-   * Sends the agent one line. A busy agent gets it queued behind the turn in flight; where the
+   * Sends the agent a message, unless its chat is archived. A busy agent gets it queued behind the turn in flight; where the
    * daemon refuses to queue it for this sender, it goes in as a steer, which the turn picks up.
    */
   private async tell(paseo: Paseo, agentId: string, text: string): Promise<boolean> {
     const ref = paseo.agents.ref(agentId);
+    // A message wakes and un-archives its chat, so an archived chat is never sent one.
+    try {
+      await ref.refresh();
+      if (ref.archivedAt) return false;
+    } catch (error) {
+      console.error(`Could not read ${agentId} before telling it`, error);
+    }
     const busy = this.active.has(agentId);
     const attempts: (Parameters<typeof ref.send>[1] | undefined)[] = busy
       ? [{ activeTurnBehavior: "queue" }, { activeTurnBehavior: "steer" }]

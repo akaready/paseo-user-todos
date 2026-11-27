@@ -20,7 +20,6 @@ export function SettingsPopover({
   clearCount,
   onClear,
   onEditStatuses,
-  onManageLabels,
 }: {
   theme: PluginTheme;
   values: TodoSettings;
@@ -32,7 +31,6 @@ export function SettingsPopover({
   clearCount: number;
   onClear(): void;
   onEditStatuses(): void;
-  onManageLabels(): void;
 }) {
   const { colors } = theme;
   const [confirming, setConfirming] = useState(false);
@@ -88,26 +86,6 @@ export function SettingsPopover({
           <Toggle theme={theme} label="Confetti" value={values.confetti} disabled={saving} onValueChange={(confetti) => onChange({ confetti })} />
         </View>
         <View style={{ height: 1, backgroundColor: colors.border, marginTop: 4 }} />
-        <Hover style={{ marginHorizontal: -8 }}>
-          {(hovered) => (
-            <Pressable
-              accessibilityRole="button"
-              onPress={onManageLabels}
-              style={{
-                height: 32,
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 8,
-                paddingHorizontal: 8,
-                borderRadius: 6,
-                backgroundColor: hovered ? tint(colors.foreground, 0.07, colors.surface2) : "transparent",
-              }}
-            >
-              <Icon name="Tags" size={14} color={colors.foregroundMuted} />
-              <Text style={text}>Manage labels</Text>
-            </Pressable>
-          )}
-        </Hover>
         <Hover style={{ marginHorizontal: -8 }}>
           {(hovered) => (
             <Pressable

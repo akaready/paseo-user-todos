@@ -18,19 +18,17 @@ import {
   Text,
   View,
 } from "react-native";
-import { cleanTags, MAX_TAGS, tagKey, type RegisteredTag, type TagHue } from "../shared/tags";
+import { cleanTags, tagKey, type RegisteredTag, type TagHue } from "../shared/tags";
 import {
   addComment,
   addTodo,
+  archiveTodo,
   clearTodos,
-  deleteLabel,
+  createLabel,
   firstStatus,
-  labelCounts,
   normalizeStatuses,
   paseoLabels,
-  purgeLabels,
   removeComment,
-  renameLabel,
   reorderTodos,
   resolveStatus,
   setStatus,
@@ -49,7 +47,6 @@ import { NewTodoZone, type NewTodoValues } from "./compose";
 import { Burst } from "./confetti";
 import { useCurrentChat, useTodoData } from "./data";
 import { StatusEditor } from "./forms";
-import { ManageLabels } from "./labels";
 import { LabelsMenu, MenuLayer, type MenuOption, type MenuState } from "./menu";
 import { sortTodos } from "./order";
 import { Hover, Segmented, StatusPill, statusInk, tint } from "./parts";
@@ -372,10 +369,8 @@ export function TodoPanel({
   const settings = useSettings(todoSettings);
   const values = settings.status === "ready" ? settings.values : defaults;
   const statuses = useMemo(() => normalizeStatuses(values.statuses), [values.statuses]);
-  /** The labels this plugin made, which it can change. */
-  const ownTags = values.tags;
   const readPaseo = useRpc(paseoLabels);
-  /** Paseo's own labels, read from its file. They are read-only here. */
+  /** Paseo's own workspace labels, read from its file: read-only here. */
   const [paseoTags, setPaseoTags] = useState<RegisteredTag[]>([]);
   useEffect(() => {
     void readPaseo({}).then((result) => setPaseoTags(result.labels), () => {});
@@ -383,11 +378,23 @@ export function TodoPanel({
   useSubscription(watchTodos, {}, (event) => {
     if (event.kind === "labels") void readPaseo({}).then((result) => setPaseoTags(result.labels), () => {});
   });
-  /** Every label color there is: Paseo's first, so its colors win, then the plugin's own. */
-  const registry = useMemo(
-    () => [...paseoTags, ...ownTags.filter((tag) => !paseoTags.some((other) => tagKey(other.name) === tagKey(tag.name)))],
-    [paseoTags, ownTags],
-  );
+  /** The labels made from this panel, with the color each was given. */
+  const ownTags = values.tags;
+  /**
+   * Every label to offer: Paseo's, then the plugin's own that Paseo lacks, one entry per name. Paseo's
+   * color wins, except that a label made here still wears the color it was given while Paseo shows its
+   * default violet, since the plugin cannot set a color in Paseo.
+   */
+  const registry = useMemo(() => {
+    const own = new Map(ownTags.map((tag) => [tagKey(tag.name), tag]));
+    const fromPaseo = paseoTags.map((tag) => {
+      const mine = own.get(tagKey(tag.name));
+      return mine && tag.color === "violet" ? { ...tag, color: mine.color } : tag;
+    });
+    return [...fromPaseo, ...ownTags.filter((tag) => !paseoTags.some((other) => tagKey(other.name) === tagKey(tag.name)))];
+  }, [paseoTags, ownTags]);
+  const makeLabel = useRpc(createLabel);
+  const archiveOne = useRpc(archiveTodo);
   const changeStatus = useRpc(setStatus);
   const changeTags = useRpc(setTags);
   const addNote = useRpc(addComment);
@@ -395,16 +402,10 @@ export function TodoPanel({
   const clear = useRpc(clearTodos);
   const add = useRpc(addTodo);
   const saveOrder = useRpc(reorderTodos);
-  const readCounts = useRpc(labelCounts);
-  const renameTag = useRpc(renameLabel);
-  const deleteTag = useRpc(deleteLabel);
-  const purgeTags = useRpc(purgeLabels);
 
   const [scope, setScope] = useState<Scope>("chat");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [statusesOpen, setStatusesOpen] = useState(false);
-  const [manageOpen, setManageOpen] = useState(false);
-  const [counts, setCounts] = useState<{ name: string; count: number }[]>([]);
   const [composing, setComposing] = useState(false);
   /** What the composer has chosen outside its own fields: its starting status and its tags. */
   const [draft, setDraft] = useState<{ statusId: string | null; tags: string[] }>({ statusId: null, tags: [] });
@@ -457,7 +458,9 @@ export function TodoPanel({
       void settings.save({ ...settings.values, ...change }, settings.revision);
   };
 
-  const todos = data?.todos ?? [];
+  /** Todos just archived: gone from the list as soon as their exit finishes, ahead of the server's own update. */
+  const [gone, setGone] = useState<ReadonlySet<string>>(new Set());
+  const todos = useMemo(() => (data?.todos ?? []).filter((todo) => !gone.has(todo.id)), [data, gone]);
   const inScope = (todo: { agentId: string }) => scope === "all" || todo.agentId === chat;
   const isOpen = (todo: Todo) => todo.status === "open" && !todo.closed;
   const view = viewOf(values);
@@ -551,6 +554,32 @@ export function TodoPanel({
     [values.confetti, reduceMotion, statuses, patch, changeStatus, refresh],
   );
 
+  /** Archives a todo: its card eases out like a closed one, with no confetti, then the todo is archived for good. */
+  const archive = (todo: Todo) => {
+    setLeaving((current) => new Set(current).add(todo.id));
+    setTimeout(() => {
+      setGone((current) => new Set(current).add(todo.id));
+      setLeaving((current) => {
+        const copy = new Set(current);
+        copy.delete(todo.id);
+        return copy;
+      });
+      setExpanded((current) => {
+        const copy = new Set(current);
+        copy.delete(todo.id);
+        return copy;
+      });
+      void archiveOne({ id: todo.id }).catch(() => {
+        setGone((current) => {
+          const copy = new Set(current);
+          copy.delete(todo.id);
+          return copy;
+        });
+        void refresh();
+      });
+    }, reduceMotion ? 0 : 520);
+  };
+
   const statusMenu = (todo: Todo, anchor: View | null) =>
     openMenu(
       anchor,
@@ -588,16 +617,6 @@ export function TodoPanel({
     void changeTags({ id: todo.id, tags }).catch(() => void refresh());
   };
 
-  /** Every label there is: the registry in its order, then tags the agents made, by name. */
-  const allTags = (() => {
-    const seen = new Map<string, string>();
-    for (const tag of registry) seen.set(tagKey(tag.name), tag.name);
-    const extra = new Map<string, string>();
-    for (const todo of todos)
-      for (const tag of todo.tags)
-        if (!seen.has(tagKey(tag)) && !extra.has(tagKey(tag))) extra.set(tagKey(tag), tag);
-    return [...seen.values(), ...[...extra.values()].sort((a, b) => a.localeCompare(b))];
-  })();
   const labelled = labels
     ? labels.id === "new"
       ? ({ id: "new", tags: draft.tags } as Pick<Todo, "id" | "tags">)
@@ -610,62 +629,32 @@ export function TodoPanel({
     else editTags(target as Todo, tags);
   };
 
+  /** The labels of a todo that are on offer: the rest stay in the store and are never shown. */
+  const isKnown = (tag: string) => registry.some((label) => tagKey(label.name) === tagKey(tag));
+
   const toggleTag = (todo: Pick<Todo, "id" | "tags">, name: string) => {
-    const on = todo.tags.some((tag) => tagKey(tag) === tagKey(name));
-    retag(todo, on ? todo.tags.filter((tag) => tagKey(tag) !== tagKey(name)) : cleanTags([...todo.tags, name]));
+    const shown = todo.tags.filter(isKnown);
+    const kept = todo.tags.filter((tag) => !isKnown(tag));
+    const on = shown.some((tag) => tagKey(tag) === tagKey(name));
+    // Shown labels first, so a limit on tags never drops one the user just picked.
+    retag(todo, [...(on ? shown.filter((tag) => tagKey(tag) !== tagKey(name)) : [...shown, name]), ...kept]);
   };
 
-  /** Registers the label with its color (a name already in the registry keeps the color it has) and puts it on the todo. */
-  const createTag = (todo: Pick<Todo, "id" | "tags">, name: string, color: TagHue) => {
-    const known = allTags.find((tag) => tagKey(tag) === tagKey(name));
-    // A name Paseo already has is applied as it is, in Paseo's color: its file is not ours to write.
-    if (!registry.some((tag) => tagKey(tag.name) === tagKey(name))) {
-      save({ tags: [...ownTags, { name: known ?? name, color }] });
+  /** Makes the label in Paseo, records the chosen color here, and puts it on the todo. */
+  const createTag = async (todo: Pick<Todo, "id" | "tags">, raw: string, color: TagHue) => {
+    const known = registry.find((tag) => tagKey(tag.name) === tagKey(raw));
+    let name = known?.name ?? null;
+    if (!known) {
+      const result = await makeLabel({ workspaceId, name: raw }).catch(() => null);
+      name = result?.name ?? null;
+      if (!name) return;
+      if (!ownTags.some((tag) => tagKey(tag.name) === tagKey(name!))) save({ tags: [...ownTags, { name, color }] });
     }
-    const next = cleanTags([...todo.tags, known ?? name]);
-    if (next.length !== todo.tags.length) retag(todo, next);
-  };
-  // ---- Manage labels -------------------------------------------------------------------
-
-  const loadCounts = useCallback(async () => {
-    try {
-      setCounts((await readCounts({})).counts);
-    } catch {
-      // The list stays as it was; the next action reads it again.
+    if (!todo.tags.some((tag) => tagKey(tag) === tagKey(name!))) {
+      const shown = todo.tags.filter(isKnown);
+      retag(todo, [...cleanTags([...shown, name!]), ...todo.tags.filter((tag) => !isKnown(tag))]);
     }
-  }, [readCounts]);
-  useEffect(() => {
-    if (manageOpen) void loadCounts();
-  }, [manageOpen, loadCounts]);
-
-  const colorOf = (name: string) => ownTags.find((tag) => tagKey(tag.name) === tagKey(name))?.color ?? null;
-  const manageRename = async (name: string, to: string) => {
-    const result = await renameTag({ from: name, to, color: colorOf(name) });
-    if (result.error) return result.error;
-    // The registry keeps the label's color under its new name.
-    if (ownTags.some((tag) => tagKey(tag.name) === tagKey(name))) {
-      save({ tags: ownTags.map((tag) => (tagKey(tag.name) === tagKey(name) ? { ...tag, name: to } : tag)) });
-    }
-    await Promise.all([loadCounts(), refresh()]);
-    return null;
   };
-  const manageRecolor = (name: string, color: TagHue) => {
-    const known = ownTags.some((tag) => tagKey(tag.name) === tagKey(name));
-    save({
-      tags: known
-        ? ownTags.map((tag) => (tagKey(tag.name) === tagKey(name) ? { ...tag, color } : tag))
-        : [...ownTags, { name, color }],
-    });
-  };
-  const manageDelete = (name: string) => {
-    save({ tags: ownTags.filter((tag) => tagKey(tag.name) !== tagKey(name)) });
-    void deleteTag({ name, color: colorOf(name) }).then(() => Promise.all([loadCounts(), refresh()]));
-  };
-  const managePurge = (names: string[]) => {
-    save({ tags: ownTags.filter((tag) => !names.some((name) => tagKey(name) === tagKey(tag.name))) });
-    void purgeTags({ names, colors: names.map(colorOf) }).then(loadCounts);
-  };
-
 
   const clearAll = () => {
     const filter = scope === "all" ? { workspaceId } : chat ? { agentId: chat } : null;
@@ -921,6 +910,7 @@ export function TodoPanel({
       onComment={(text) => comment(todo, text)}
       onUncomment={(commentId) => uncomment(todo, commentId)}
       onDone={(origin) => choose(todo, closingStatus, origin)}
+      onArchive={() => archive(todo)}
       onLink={(url) => void openExternalUrl(url).catch(() => {})}
       onJump={() => jump(todo)}
       onMenu={(anchor) => statusMenu(todo, anchor)}
@@ -1212,10 +1202,6 @@ export function TodoPanel({
             setSettingsOpen(false);
             setStatusesOpen(true);
           }}
-          onManageLabels={() => {
-            setSettingsOpen(false);
-            setManageOpen(true);
-          }}
         />
       ) : null}
       {labels && labelled ? (
@@ -1223,32 +1209,14 @@ export function TodoPanel({
           theme={theme}
           rect={labels.rect}
           bounds={bounds}
-          registry={registry}
-          all={allTags}
-          active={labelled.tags}
-          full={labelled.tags.length >= MAX_TAGS}
+          labels={registry}
+          active={labelled.tags.filter(isKnown)}
           onToggle={(name) => toggleTag(labelled, name)}
-          onCreate={(name, color) => createTag(labelled, name, color)}
-          onManage={() => {
-            setLabels(null);
-            setManageOpen(true);
-          }}
+          onCreate={(name, color) => void createTag(labelled, name, color)}
           onClose={() => setLabels(null)}
         />
       ) : null}
       {menu ? <MenuLayer theme={theme} state={menu} bounds={bounds} onClose={() => setMenu(null)} /> : null}
-      <ManageLabels
-        theme={theme}
-        open={manageOpen}
-        registry={ownTags}
-        paseo={paseoTags}
-        counts={counts}
-        onClose={() => setManageOpen(false)}
-        onRename={manageRename}
-        onRecolor={manageRecolor}
-        onDelete={manageDelete}
-        onPurge={managePurge}
-      />
       <StatusEditor
         theme={theme}
         open={statusesOpen}
