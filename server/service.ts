@@ -411,25 +411,6 @@ export class TodoService {
   }
 
   /**
-   * Archives a todo: flagged cleared like Clear does, so it leaves every list and nothing is deleted.
-   * The agent hears about it when it proposed the todo and the todo was not already closed.
-   */
-  async archive(id: string, paseo: Paseo) {
-    await this.store.ready;
-    const todo = this.store.get(id);
-    if (!todo) return false;
-    const { statuses } = await this.values();
-    const closed = todo.status === "open" && resolveStatus(statuses, todo.statusId).closes;
-    todo.cleared = true;
-    await this.store.save();
-    this.emit({ agentId: todo.agentId, workspaceId: todo.workspaceId, kind: "changed" });
-    if (!todo.user && !closed && todo.status !== "withdrawn") {
-      await this.tell(paseo, todo.agentId, `[User Todos] The user archived "${todo.title}".${commentLines(live(todo.comments))}`);
-    }
-    return true;
-  }
-
-  /**
    * Clears a chat's todos, or a workspace's, whatever their state. They are flagged, not deleted.
    * Each affected chat is told once, naming the todos its agent proposed that were still open or
    * waiting, with their comments; todos the user made, and ones already closed, are left out.

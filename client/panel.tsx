@@ -22,7 +22,6 @@ import { cleanTags, tagKey, type RegisteredTag, type TagHue } from "../shared/ta
 import {
   addComment,
   addTodo,
-  archiveTodo,
   clearTodos,
   createLabel,
   firstStatus,
@@ -393,7 +392,6 @@ export function TodoPanel({
     });
   }, [paseoTags, ownTags]);
   const makeLabel = useRpc(createLabel);
-  const archiveOne = useRpc(archiveTodo);
   const changeStatus = useRpc(setStatus);
   const changeTags = useRpc(setTags);
   const addNote = useRpc(addComment);
@@ -457,9 +455,7 @@ export function TodoPanel({
       void settings.save({ ...settings.values, ...change }, settings.revision);
   };
 
-  /** Todos just archived: gone from the list as soon as their exit finishes, ahead of the server's own update. */
-  const [gone, setGone] = useState<ReadonlySet<string>>(new Set());
-  const todos = useMemo(() => (data?.todos ?? []).filter((todo) => !gone.has(todo.id)), [data, gone]);
+  const todos = useMemo(() => data?.todos ?? [], [data]);
   const inScope = (todo: { agentId: string }) => scope === "all" || todo.agentId === chat;
   const isOpen = (todo: Todo) => todo.status === "open" && !todo.closed;
   const view = viewOf(values);
@@ -479,6 +475,8 @@ export function TodoPanel({
   const soonest = waiting.length ? Math.min(...waiting.map((item) => item.left)) : 0;
   const plainStatus = firstStatus(statuses, false);
   const closingStatus = firstStatus(statuses, true);
+  /** Swiping left: CANCEL, or else the last closing status, the opposite end from DONE. */
+  const cancelStatus = statuses.find((status) => status.id === "cancel") ?? [...statuses].reverse().find((status) => status.closes) ?? closingStatus;
 
   const expand = (id: string) =>
     setExpanded((current) => {
@@ -552,32 +550,6 @@ export function TodoPanel({
     },
     [values.confetti, reduceMotion, statuses, patch, changeStatus, refresh],
   );
-
-  /** Archives a todo: its card eases out like a closed one, with no confetti, then the todo is archived for good. */
-  const archive = (todo: Todo) => {
-    setLeaving((current) => new Set(current).add(todo.id));
-    setTimeout(() => {
-      setGone((current) => new Set(current).add(todo.id));
-      setLeaving((current) => {
-        const copy = new Set(current);
-        copy.delete(todo.id);
-        return copy;
-      });
-      setExpanded((current) => {
-        const copy = new Set(current);
-        copy.delete(todo.id);
-        return copy;
-      });
-      void archiveOne({ id: todo.id }).catch(() => {
-        setGone((current) => {
-          const copy = new Set(current);
-          copy.delete(todo.id);
-          return copy;
-        });
-        void refresh();
-      });
-    }, reduceMotion ? 0 : 520);
-  };
 
   const statusMenu = (todo: Todo, anchor: View | null) =>
     openMenu(
@@ -909,7 +881,7 @@ export function TodoPanel({
       onComment={(text) => comment(todo, text)}
       onUncomment={(commentId) => uncomment(todo, commentId)}
       onDone={(origin) => choose(todo, closingStatus, origin)}
-      onArchive={() => archive(todo)}
+      onCancel={() => choose(todo, cancelStatus, null)}
       onLink={(url) => void openExternalUrl(url).catch(() => {})}
       onJump={() => jump(todo)}
       onMenu={(anchor) => statusMenu(todo, anchor)}

@@ -188,8 +188,8 @@ export interface CardProps {
   onUncomment(commentId: string): void;
   /** A swipe right past the threshold: mark the todo done. `origin` is where the confetti starts. */
   onDone(origin: View | null): void;
-  /** A swipe left past the threshold: archive the todo. */
-  onArchive(): void;
+  /** A swipe left past the threshold: cancel the todo. */
+  onCancel(): void;
   onLink(url: string): void;
   onJump(): void;
   onMenu(anchor: View | null): void;
@@ -217,7 +217,7 @@ export function TodoCard({
   onComment,
   onUncomment,
   onDone,
-  onArchive,
+  onCancel,
   onLink,
   onJump,
   onMenu,
@@ -310,12 +310,12 @@ export function TodoCard({
 
   const onSwipeEnd = (dx: number) => {
     drag.swiped();
-    // Past 90px, or 35% of a narrow card, counts as a swipe: right marks it done, left archives it.
+    // Past 90px, or 35% of a narrow card, counts as a swipe: right marks it done, left cancels it.
     const need = Math.min(90, width.current * 0.35);
     if (dx >= need || dx <= -need) {
       const toward = dx > 0 ? 1 : -1;
       if (toward > 0) onDone(revealIcon.current);
-      else onArchive();
+      else onCancel();
       if (reduceMotion) swipe.setValue(0);
       else Animated.timing(swipe, { toValue: toward * width.current, duration: 160, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
     } else if (reduceMotion) swipe.setValue(0);
@@ -377,7 +377,7 @@ export function TodoCard({
         onSwipeEnd={onSwipeEnd}
       >
         {/* Behind the content: the green a swipe right reveals, with its check on the left, and the
-            muted neutral a swipe left reveals, with its archive box on the right. */}
+            red a swipe left reveals, with its cross on the right. */}
         <Animated.View
           pointerEvents="none"
           style={{
@@ -394,12 +394,12 @@ export function TodoCard({
           pointerEvents="none"
           style={{
             position: "absolute", left: 0, top: 0, right: 0, bottom: 0, justifyContent: "center", alignItems: "flex-end", paddingRight: 16,
-            backgroundColor: mix(base, colors.foregroundMuted, 0.18),
+            backgroundColor: mix(base, colors.statusDanger, 0.22),
             opacity: swipe.interpolate({ inputRange: [-1, 0, 1], outputRange: [1, 0, 0], extrapolate: "clamp" }),
           }}
         >
           <View style={{ width: 20, height: 20, alignItems: "center", justifyContent: "center" }}>
-            <Icon name="Archive" size={18} color={colors.foregroundMuted} />
+            <Icon name="CircleX" size={18} color={colors.statusDanger} />
           </View>
         </Animated.View>
         <Animated.View style={{ backgroundColor: ground, transform: [{ translateX: swipe }] }}>

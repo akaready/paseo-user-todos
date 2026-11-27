@@ -220,13 +220,6 @@ export const createLabel = defineRpc({
   output: z.object({ name: z.string().nullable(), error: z.string().optional() }),
 });
 
-/** Archives a todo: it leaves the list (flagged cleared, never deleted) and the agent that proposed it is told. */
-export const archiveTodo = defineRpc({
-  name: "todos.archive",
-  input: z.object({ id: z.string() }),
-  output: z.object({ ok: z.boolean() }),
-});
-
 export const setTags = defineRpc({
   name: "todos.tags",
   input: z.object({ id: z.string(), tags: z.array(z.string()) }),

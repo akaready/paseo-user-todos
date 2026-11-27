@@ -6,7 +6,6 @@ import { INSTRUCTIONS, todoTools } from "./server/tools";
 import {
   addComment,
   addTodo,
-  archiveTodo,
   AGENT_KEY,
   clearTodos,
   createLabel,
@@ -68,7 +67,6 @@ export default function contribute(server: PluginServerContext) {
   server.handle(addComment, ({ id, text }) => service.addComment(id, text));
   server.handle(removeComment, async ({ id, commentId }) => ({ ok: await service.removeComment(id, commentId) }));
   server.handle(createLabel, ({ workspaceId, name }, { paseo }) => service.createLabel(workspaceId, name, paseo));
-  server.handle(archiveTodo, async ({ id }, { paseo }) => ({ ok: await service.archive(id, paseo) }));
   server.handle(addTodo, async (input) => service.addOwn(input));
   server.handle(clearTodos, async (input, { paseo }) => ({ cleared: await service.clear(input, paseo) }));
   server.handle(watchTodos, (_input, { push, signal }) => {
