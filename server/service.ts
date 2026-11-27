@@ -104,7 +104,7 @@ export class TodoService {
       this.store.orderOf(agentId).forEach((id, at) => ranks.set(id, at));
     }
     const todos = mine
-      .filter((todo) => todo.status === "open" || (todo.status === "withdrawn" && todo.shown))
+      .filter((todo) => todo.status === "open")
       .map((todo) => toWire(todo, statuses, ranks.get(todo.id) ?? 0));
     const pending = mine
       .filter((todo) => todo.status === "pending")

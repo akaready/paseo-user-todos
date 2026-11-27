@@ -304,11 +304,7 @@ function DoneRow({
   return (
     <View style={styles.doneRow}>
       <Text style={styles.doneTitle}>{todo.title}</Text>
-      {todo.status === "withdrawn" ? (
-        <Text style={styles.told}>withdrawn</Text>
-      ) : (
-        <StatusPill theme={theme} status={status} neutral={false} onMenu={onMenu} />
-      )}
+      <StatusPill theme={theme} status={status} neutral={false} onMenu={onMenu} />
     </View>
   );
 }
@@ -945,7 +941,6 @@ export function TodoPanel({
         : open.filter((todo) => effectiveId(todo) === item.id),
     }))
     .filter((section) => section.items.length > 0);
-  const withdrawn = done.filter((todo) => todo.status === "withdrawn");
   const toggleFold = (key: string, currentlyOpen: boolean) => {
     folded.set(key, currentlyOpen);
     setFoldEpoch((epoch) => epoch + 1);
@@ -1101,33 +1096,6 @@ export function TodoPanel({
                       </View>
                     );
                   })}
-                  {withdrawn.length > 0 ? (
-                    <View style={styles.group}>
-                      <GroupHeader
-                        styles={styles}
-                        theme={theme}
-                        name="Withdrawn"
-                        icon={{ name: "CircleSlash", color: theme.colors.foregroundMuted }}
-                        count={withdrawn.length}
-                        open={!isFolded("status:withdrawn", true)}
-                        onPress={() => toggleFold("status:withdrawn", !isFolded("status:withdrawn", true))}
-                      />
-                      {isFolded("status:withdrawn", true) ? null : (
-                        <View style={styles.done}>
-                          {withdrawn.map((todo) => (
-                            <DoneRow
-                              key={todo.id}
-                              styles={styles}
-                              theme={theme}
-                              todo={todo}
-                              status={resolveStatus(statuses, todo.statusId)}
-                              onMenu={(anchor) => statusMenu(todo, anchor)}
-                            />
-                          ))}
-                        </View>
-                      )}
-                    </View>
-                  ) : null}
                 </>
               ) : scope === "all" ? (
                 groups.map((agentId) => {

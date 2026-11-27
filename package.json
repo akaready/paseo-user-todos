@@ -1,8 +1,8 @@
 {
   "name": "user-todos",
   "private": true,
-  "version": "0.2.0",
-  "description": "Gives the tasks an agent hands you, the ones only you can do, a panel beside the chat, with the steps, the links, and a tick that tells the agent",
+  "version": "0.2.1",
+  "description": "Gives the tasks an agent hands you, the ones only you can do, a panel beside the chat, with steps, links, a status, and comments that reach the agent",
   "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
