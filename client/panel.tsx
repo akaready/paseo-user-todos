@@ -381,17 +381,16 @@ export function TodoPanel({
   /** The labels made from this panel, with the color each was given. */
   const ownTags = values.tags;
   /**
-   * Every label to offer: Paseo's, then the plugin's own that Paseo lacks, one entry per name. Paseo's
-   * color wins, except that a label made here still wears the color it was given while Paseo shows its
-   * default violet, since the plugin cannot set a color in Paseo.
+   * Every label to offer: exactly Paseo's, so a label deleted in Paseo is gone here too. A label made
+   * here still wears the color it was given while Paseo shows its default violet, since the plugin
+   * cannot set a color in Paseo.
    */
   const registry = useMemo(() => {
     const own = new Map(ownTags.map((tag) => [tagKey(tag.name), tag]));
-    const fromPaseo = paseoTags.map((tag) => {
+    return paseoTags.map((tag) => {
       const mine = own.get(tagKey(tag.name));
       return mine && tag.color === "violet" ? { ...tag, color: mine.color } : tag;
     });
-    return [...fromPaseo, ...ownTags.filter((tag) => !paseoTags.some((other) => tagKey(other.name) === tagKey(tag.name)))];
   }, [paseoTags, ownTags]);
   const makeLabel = useRpc(createLabel);
   const archiveOne = useRpc(archiveTodo);
