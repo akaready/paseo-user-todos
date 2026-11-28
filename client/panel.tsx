@@ -38,7 +38,9 @@ import {
   todoSettings,
   watchTodos,
   viewOf,
-  type Group,
+  GROUPS,
+  SCREEN_GROUPS,
+  type ScreenGroup,
   type Sort,
   type Status,
   type Todo,
@@ -50,7 +52,7 @@ import { useCurrentChat, useTodoData } from "./data";
 import { StatusEditor } from "./forms";
 import { LabelsMenu, MenuLayer, type MenuOption, type MenuState } from "./menu";
 import { sortTodos } from "./order";
-import { Hover, Segmented, StatusPill, statusInk, tint } from "./parts";
+import { Hover, mix, Segmented, StatusPill, statusInk, tint } from "./parts";
 import { SettingsPopover } from "./settings";
 import { fingerOnWeb, holdSelection, revealMessage } from "./web";
 
@@ -319,13 +321,19 @@ const SORT_LABELS: Record<Exclude<Sort, "status">, string> = {
   oldest: "Oldest first",
   manual: "Manual",
 };
-const GROUP_LABELS: Record<Group, string> = { chat: "Chat", status: "Status" };
+const GROUP_LABELS: Record<ScreenGroup, string> = { board: "Board", chat: "Chat", status: "Status" };
 /** Below this width the scope tabs can't show both labels, so the unselected one shrinks to its count. */
 const TABS_FULL_WIDTH = 150;
 
 /** Room between two cards in a list, which the drag layout adds back wherever it works out positions. */
 const GAP = 10;
 const COMPACT_GAP = 18;
+
+/** The board's columns: a least width, the room between them and around them, and how far a swipe goes before it is a drag. */
+const BOARD_MIN = 280;
+const BOARD_GAP = 12;
+const BOARD_PAD = 12;
+const BOARD_CROSSOVER = 140;
 
 /** Paseo's phone header row (`HEADER_INNER_HEIGHT_MOBILE`): the screen's buttons are drawn into its empty right end. */
 const PHONE_HEADER = 56;
@@ -377,12 +385,29 @@ interface Session {
 /** The repo a todo belongs to: its workspace's project, keyed so two repos with one name stay apart. */
 type RepoOf = (workspaceId: string | null) => { key: string; title: string };
 
-/** What the all-repos screen narrows its list to: a todo must hold one of the statuses and one of the labels chosen. */
+/** What the all-repos screen narrows its list to: a todo must hold one of the labels and repos chosen. */
 interface Narrow {
-  statuses: ReadonlySet<string>;
   labels: ReadonlySet<string>;
+  repos: ReadonlySet<string>;
 }
-const NOT_NARROWED: Narrow = { statuses: new Set(), labels: new Set() };
+const NOT_NARROWED: Narrow = { labels: new Set(), repos: new Set() };
+
+/** A card carried across the board: where it started (from the board's corner), and the column it is over. */
+interface Carried {
+  id: string;
+  left: number;
+  top: number;
+  width: number;
+  target: string | null;
+}
+
+/** Measurements for one carry, in window coordinates, kept out of state so a pointer move costs no render. */
+interface CarrySession {
+  id: string;
+  frame: { x: number; y: number; width: number } | null;
+  columns: { id: string; x: number; width: number }[];
+  ready: boolean;
+}
 
 /** Every repo's workspaces, grouped by project, for the all-repos screen. */
 const BY_PROJECT = {
@@ -473,7 +498,12 @@ function Todos({
   const [chosenScope, setScope] = useState<Scope>("chat");
   const scope: Scope = everywhere ? "all" : chosenScope;
   const [narrow, setNarrow] = useState<Narrow>(NOT_NARROWED);
-  const narrowed = narrow.statuses.size > 0 || narrow.labels.size > 0;
+  /** The statuses the Todos screen hides; the panel hides none. */
+  const hidden = useMemo<ReadonlySet<string>>(
+    () => new Set(workspaceId === null ? (values.screenHidden ?? []) : []),
+    [workspaceId, values.screenHidden],
+  );
+  const narrowed = hidden.size > 0 || narrow.labels.size > 0 || narrow.repos.size > 0;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [statusesOpen, setStatusesOpen] = useState(false);
   const [composing, setComposing] = useState(false);
@@ -516,6 +546,14 @@ function Todos({
   const placeholderY = useRef(new Animated.Value(0)).current;
   const [lifted, setLifted] = useState<Lifted | null>(null);
   const [armed, setArmed] = useState<string | null>(null);
+  // Carrying a card across the board: its copy follows the pointer in a layer over the columns.
+  const boardBox = useRef<View>(null);
+  const columnNodes = useRef(new Map<string, View>());
+  const carrying = useRef<CarrySession | null>(null);
+  const carryTarget = useRef<string | null>(null);
+  const carryTravel = useRef({ dx: 0, dy: 0 });
+  const ghostXY = useRef(new Animated.ValueXY()).current;
+  const [carry, setCarry] = useState<Carried | null>(null);
 
   useEffect(() => {
     void AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
@@ -532,9 +570,20 @@ function Todos({
   const inScope = (todo: { agentId: string }) => scope === "all" || todo.agentId === chat;
   const isOpen = (todo: Todo) => todo.status === "open" && !todo.closed;
   const passes = (todo: Todo) =>
-    (narrow.statuses.size === 0 || narrow.statuses.has(resolveStatus(statuses, todo.statusId).id)) &&
-    (narrow.labels.size === 0 || todo.tags.some((tag) => narrow.labels.has(tagKey(tag))));
-  const view = viewOf(values);
+    !hidden.has(resolveStatus(statuses, todo.statusId).id) &&
+    (narrow.labels.size === 0 || todo.tags.some((tag) => narrow.labels.has(tagKey(tag)))) &&
+    (narrow.repos.size === 0 || (repoOf !== undefined && narrow.repos.has(repoOf(todo.workspaceId).key)));
+  // The screen keeps its own group and sort. Wide, it is a board unless another group was picked; the
+  // phone and the panel keep the panel's choice until the screen is given one.
+  const board = everywhere && !compact && (values.screenGroup ?? "board") === "board";
+  const view = viewOf({
+    sort: (everywhere ? values.screenSort : undefined) ?? values.sort,
+    group: everywhere && values.screenGroup && values.screenGroup !== "board" ? values.screenGroup : values.group,
+  });
+  const saveView = (group: ScreenGroup, sort: Sort) => {
+    if (everywhere) save({ screenGroup: group, screenSort: sort });
+    else if (group !== "board") save({ group, sort });
+  };
   const open = sortTodos(
     todos.filter((todo) => (isOpen(todo) || leaving.has(todo.id)) && inScope(todo) && passes(todo)),
     view.sort,
@@ -572,6 +621,8 @@ function Todos({
   };
   const openMenu = (node: View | null, options: readonly MenuOption[], align: "start" | "end" = "end") =>
     placeAt(node, (rect) => setMenu({ rect, options, align }));
+  const openToolbarMenu = (node: View | null, kind: "filter" | "view") =>
+    placeAt(node, (rect) => setMenu({ rect, kind, align: "end" }));
 
   /** Sets a todo's status. Closing one fades it out, pops confetti from `origin`, and files it under Done. */
   const choose = useCallback(
@@ -646,17 +697,34 @@ function Todos({
     if (!next.delete(key)) next.add(key);
     return next;
   };
+  /** Every repo that has a todo, by name. */
+  const repoList = repoOf
+    ? [...new Map(todos.map((todo) => repoOf(todo.workspaceId)).map((repo) => [repo.key, repo])).values()].sort((a, b) =>
+        a.title.localeCompare(b.title),
+      )
+    : [];
   /** The all-repos screen's filter: Paseo's labels are one list for every repo, so one list is offered. */
   const filterOptions: MenuOption[] = [
-    ...(narrowed ? [{ key: "clear", label: "Clear filter", onSelect: () => setNarrow(NOT_NARROWED) }] : []),
+    ...(narrowed
+      ? [
+          {
+            key: "clear",
+            label: "Clear filter",
+            onSelect: () => {
+              setNarrow(NOT_NARROWED);
+              save({ screenHidden: [] });
+            },
+          },
+        ]
+      : []),
     ...statuses.map((status, at) => ({
       key: `status-${status.id}`,
       label: status.label,
-      heading: at === 0 ? "Status" : undefined,
+      heading: at === 0 ? "Show" : undefined,
       divider: at === 0 && narrowed,
-      selected: narrow.statuses.has(status.id),
+      selected: !hidden.has(status.id),
       icon: { name: statusIcon(status), color: statusInk(theme, status.color) },
-      onSelect: () => setNarrow((current) => ({ ...current, statuses: flip(current.statuses, status.id) })),
+      onSelect: () => save({ screenHidden: [...flip(hidden, status.id)] }),
     })),
     ...registry.map((tag, at) => ({
       key: `label-${tag.name}`,
@@ -665,6 +733,14 @@ function Todos({
       divider: at === 0,
       selected: narrow.labels.has(tagKey(tag.name)),
       onSelect: () => setNarrow((current) => ({ ...current, labels: flip(current.labels, tagKey(tag.name)) })),
+    })),
+    ...repoList.map((repo, at) => ({
+      key: `repo-${repo.key}`,
+      label: repo.title,
+      heading: at === 0 ? "Repo" : undefined,
+      divider: at === 0,
+      selected: narrow.repos.has(repo.key),
+      onSelect: () => setNarrow((current) => ({ ...current, repos: flip(current.repos, repo.key) })),
     })),
   ];
 
@@ -944,7 +1020,7 @@ function Todos({
         // Manual order is kept per chat, so a section that mixes chats saves this chat's cards only.
         const ids = moved.filter((id) => todos.find((todo) => todo.id === id)?.agentId === agentId);
         reorder(agentId, ids);
-        save({ sort: "manual", group: view.group });
+        saveView(view.group, "manual");
         void saveOrder({ agentId, ids }).then(refresh, () => void refresh());
       }
       session.current = null;
@@ -952,10 +1028,80 @@ function Todos({
     });
   };
 
+  // ---- carrying a card across the board ---------------------------------------------
+
+  const beginCarry = (id: string) => {
+    holdSelection(true);
+    carryTravel.current = { dx: 0, dy: 0 };
+    carryTarget.current = null;
+    ghostXY.setValue({ x: 0, y: 0 });
+    const s: CarrySession = { id, frame: null, columns: [], ready: false };
+    carrying.current = s;
+    let box: { x: number; y: number } | null = null;
+    const columnList = [...columnNodes.current];
+    let waiting = columnList.length + 2;
+    const measured = () => {
+      if (--waiting > 0 || carrying.current !== s) return;
+      if (!box || !s.frame) {
+        carrying.current = null;
+        holdSelection(false);
+        return;
+      }
+      s.ready = true;
+      const { dx, dy } = carryTravel.current;
+      ghostXY.setValue({ x: dx, y: dy });
+      setCarry({ id, left: s.frame.x - box.x, top: s.frame.y - box.y, width: s.frame.width, target: null });
+      moveCarry(dy, dx);
+    };
+    boardBox.current?.measureInWindow((x, y) => {
+      box = { x, y };
+      measured();
+    });
+    nodes.current.get(id)?.measureInWindow((x, y, width) => {
+      s.frame = { x, y, width };
+      measured();
+    });
+    for (const [key, node] of columnList) {
+      node.measureInWindow((x, _y, width) => {
+        s.columns.push({ id: key, x, width });
+        measured();
+      });
+    }
+  };
+
+  const moveCarry = (dy: number, dx: number) => {
+    carryTravel.current = { dx, dy };
+    const s = carrying.current;
+    if (!s?.ready || !s.frame) return;
+    ghostXY.setValue({ x: dx, y: dy });
+    const x = s.frame.x + s.frame.width / 2 + dx;
+    const over = s.columns.find((column) => x >= column.x - BOARD_GAP / 2 && x < column.x + column.width + BOARD_GAP / 2);
+    if ((over?.id ?? null) !== carryTarget.current) {
+      carryTarget.current = over?.id ?? null;
+      setCarry((current) => (current ? { ...current, target: carryTarget.current } : current));
+    }
+  };
+
+  /** Dropping on another column sets the card's status as its pill menu does; anywhere else changes nothing. */
+  const endCarry = (todo: Todo) => {
+    lastDrag.current = Date.now();
+    setArmed(null);
+    holdSelection(false);
+    const target = statuses.find((item) => item.id === carryTarget.current);
+    const ready = carrying.current?.ready;
+    carrying.current = null;
+    carryTarget.current = null;
+    setCarry(null);
+    if (ready && target && target.id !== resolveStatus(statuses, todo.statusId).id) {
+      choose(todo, target, nodes.current.get(todo.id) ?? null);
+    }
+  };
+
   const dragFor = (todo: Todo, group: readonly string[]): CardDrag => ({
-    hidden: lifted?.id === todo.id,
-    active: lifted !== null && lifted.group.includes(todo.id),
-    offset: offsetOf(todo.id),
+    hidden: (board ? carry?.id : lifted?.id) === todo.id,
+    active: !board && lifted !== null && lifted.group.includes(todo.id),
+    offset: board ? 0 : offsetOf(todo.id),
+    crossover: board ? BOARD_CROSSOVER : undefined,
     armed: armed === todo.id,
     mouse,
     nodeRef: (node) => {
@@ -964,9 +1110,9 @@ function Todos({
     },
     arm: () => setArmed(todo.id),
     release: () => setArmed((current) => (session.current ? current : current === todo.id ? null : current)),
-    onStart: () => beginDrag(todo.id, group),
-    onMove: moveDrag,
-    onEnd: (dy) => endDrag(todo.agentId, dy),
+    onStart: () => (board ? beginCarry(todo.id) : beginDrag(todo.id, group)),
+    onMove: (dy, dx) => (board ? moveCarry(dy, dx) : moveDrag(dy)),
+    onEnd: (dy) => (board ? endCarry(todo) : endDrag(todo.agentId, dy)),
     swiped: () => {
       lastDrag.current = Date.now();
     },
@@ -981,7 +1127,13 @@ function Todos({
       status={resolveStatus(statuses, todo.statusId)}
       plain={resolveStatus(statuses, todo.statusId).id === plainStatus.id}
       registry={registry}
-      meta={scope === "all" && view.group === "status" ? { agentId: todo.agentId, fallback: todo.chatTitle } : undefined}
+      meta={
+        board
+          ? { agentId: todo.agentId, fallback: todo.chatTitle, repo: repoOf?.(todo.workspaceId).title }
+          : scope === "all" && view.group === "status"
+            ? { agentId: todo.agentId, fallback: todo.chatTitle }
+            : undefined
+      }
       expanded={expanded.has(todo.id)}
       leaving={leaving.has(todo.id)}
       entering={entering.has(todo.id)}
@@ -1057,6 +1209,26 @@ function Todos({
       );
     });
 
+  const groupKeys: readonly ScreenGroup[] = everywhere && !compact ? SCREEN_GROUPS : GROUPS;
+  const viewOptions: MenuOption[] = [
+    ...groupKeys.map((key, at) => ({
+      key: `group-${key}`,
+      label: GROUP_LABELS[key],
+      heading: at === 0 ? "Group by" : undefined,
+      selected: key === (board ? "board" : view.group),
+      onSelect: () => saveView(key, view.sort),
+    })),
+    ...(Object.keys(SORT_LABELS) as Exclude<Sort, "status">[]).map((key, at) => ({
+      key: `sort-${key}`,
+      label: SORT_LABELS[key],
+      heading: at === 0 ? "Sort" : undefined,
+      divider: at === 0,
+      selected: key === view.sort,
+      onSelect: () => saveView(board ? "board" : view.group, key),
+    })),
+  ];
+  // The toolbar menus are rebuilt on every render, so a check moves the moment a row is tapped.
+  const menuOptions = menu?.kind === "filter" ? filterOptions : menu?.kind === "view" ? viewOptions : (menu?.options ?? []);
   const actions = (
     <View style={[styles.acts, compact && { gap: 10 }]}>
       {everywhere ? (
@@ -1067,7 +1239,7 @@ function Todos({
           label="Filter"
           large={compact}
           active={narrowed}
-          onPress={(node) => openMenu(node, filterOptions)}
+          onPress={(node) => openToolbarMenu(node, "filter")}
         />
       ) : (
         <IconButton
@@ -1087,25 +1259,7 @@ function Todos({
         icon="Settings2"
         label={`Sort: ${SORT_LABELS[view.sort]}`}
           large={compact}
-        onPress={(node) =>
-          openMenu(node, [
-            ...(Object.keys(GROUP_LABELS) as Group[]).map((key, at) => ({
-              key: `group-${key}`,
-              label: GROUP_LABELS[key],
-              heading: at === 0 ? "Group by" : undefined,
-              selected: key === view.group,
-              onSelect: () => save({ group: key, sort: view.sort }),
-            })),
-            ...(Object.keys(SORT_LABELS) as Exclude<Sort, "status">[]).map((key, at) => ({
-              key: `sort-${key}`,
-              label: SORT_LABELS[key],
-              heading: at === 0 ? "Sort" : undefined,
-              divider: at === 0,
-              selected: key === view.sort,
-              onSelect: () => save({ sort: key, group: view.group }),
-            })),
-          ])
-        }
+        onPress={(node) => openToolbarMenu(node, "view")}
       />
       <IconButton
         styles={styles}
@@ -1184,6 +1338,86 @@ function Todos({
   const chatIds = open.map((todo) => todo.id);
   const liftedTodo = lifted ? todos.find((todo) => todo.id === lifted.id) : undefined;
 
+  // The board: a column for each status, in the status list's order, closing ones included.
+  const columns = board
+    ? statuses.filter((item) => !hidden.has(item.id)).map((item) => ({
+        status: item,
+        items: item.closes
+          ? sortTodos(
+              done.filter((todo) => todo.status === "open" && resolveStatus(statuses, todo.statusId).id === item.id),
+              view.sort,
+              statuses,
+            )
+          : open.filter((todo) => effectiveId(todo) === item.id),
+      }))
+    : [];
+  const columnWidth = Math.max(
+    BOARD_MIN,
+    (bounds.width - 2 * BOARD_PAD - (columns.length - 1) * BOARD_GAP) / Math.max(1, columns.length),
+  );
+  const carriedTodo = carry ? todos.find((todo) => todo.id === carry.id) : undefined;
+  const boardView =
+    data === null ? (
+      <View style={styles.empty}>
+        <Text style={styles.emptyText}>{failed ? "Could not read your todos." : ""}</Text>
+      </View>
+    ) : (
+      <View ref={boardBox} style={{ flex: 1 }}>
+        <ScrollView
+          horizontal
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingHorizontal: BOARD_PAD, paddingBottom: 12, gap: BOARD_GAP }}
+          scrollEnabled={armed === null && carry === null}
+        >
+          {columns.map(({ status: item, items }) => {
+            const ink = statusInk(theme, item.color);
+            const over = carry?.target === item.id;
+            const ids = items.map((todo) => todo.id);
+            return (
+              <View
+                key={item.id}
+                ref={(node) => {
+                  if (node) columnNodes.current.set(item.id, node);
+                  else columnNodes.current.delete(item.id);
+                }}
+                style={{
+                  width: columnWidth,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: over ? tint(ink, 0.8, theme.colors.foregroundMuted) : theme.colors.border,
+                  backgroundColor: over ? mix(theme.colors.surface0, ink, 0.1) : tint(theme.colors.foreground, 0.03, theme.colors.surface0),
+                }}
+              >
+                <View style={[styles.groupHead, { height: 40, paddingHorizontal: 14 }]}>
+                  <Icon name={statusIcon(item)} size={14} color={ink} />
+                  <Text style={[styles.groupText, { color: theme.colors.foreground, fontWeight: "600" as const }]} numberOfLines={1}>
+                    {item.label}
+                  </Text>
+                  <Text style={styles.groupText}>· {items.length}</Text>
+                </View>
+                <ScrollView
+                  style={{ flex: 1 }}
+                  contentContainerStyle={{ paddingHorizontal: 10, paddingTop: 2, paddingBottom: 10 }}
+                  scrollEnabled={armed === null && carry === null}
+                >
+                  {items.map((todo) => card(todo, ids))}
+                </ScrollView>
+              </View>
+            );
+          })}
+        </ScrollView>
+        {carry && carriedTodo ? (
+          <View pointerEvents="none" style={{ position: "absolute", left: 0, top: 0, right: 0, bottom: 0, zIndex: 60 }}>
+            <Animated.View
+              style={{ position: "absolute", left: carry.left, top: carry.top, width: carry.width, transform: ghostXY.getTranslateTransform() }}
+            >
+              {card(carriedTodo, [], true)}
+            </Animated.View>
+          </View>
+        ) : null}
+      </View>
+    );
+
   return (
     <View
       ref={root}
@@ -1215,6 +1449,7 @@ function Todos({
       )}
       <>
           <View style={{ flex: 1 }}>
+          {board ? boardView : (
           <ScrollView
             style={{ flex: 1 }}
             contentContainerStyle={{ paddingBottom: 12 }}
@@ -1335,7 +1570,8 @@ function Todos({
               ) : null}
             </View>
           </ScrollView>
-          {scrolled ? (
+          )}
+          {scrolled && !board ? (
             <View pointerEvents="none" style={{ position: "absolute", top: 0, left: 0, right: 0 }}>
               {Array.from({ length: FADE_STEPS }, (_, at) => (
                 <View
@@ -1390,7 +1626,16 @@ function Todos({
           onClose={() => setLabels(null)}
         />
       ) : null}
-      {menu ? <MenuLayer theme={theme} state={menu} bounds={bounds} onClose={() => setMenu(null)} /> : null}
+      {menu ? (
+        <MenuLayer
+          theme={theme}
+          state={menu}
+          options={menuOptions}
+          keepOpen={menu.kind !== undefined}
+          bounds={bounds}
+          onClose={() => setMenu(null)}
+        />
+      ) : null}
       <StatusEditor
         theme={theme}
         open={statusesOpen}

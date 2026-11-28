@@ -155,8 +155,10 @@ export interface CardDrag {
   arm(): void;
   release(): void;
   onStart(): void;
-  onMove(dy: number): void;
-  onEnd(dy: number): void;
+  onMove(dy: number, dx: number): void;
+  onEnd(dy: number, dx: number): void;
+  /** Sideways travel past which a swipe becomes a drag, for a card that can be dropped in another column. */
+  crossover?: number;
   /** A swipe just ended, so the click that follows it is ignored. */
   swiped(): void;
 }
@@ -170,8 +172,8 @@ export interface CardProps {
   registry: readonly RegisteredTag[];
   /** Room under the card, before the next one. */
   gap: number;
-  /** The chat this card came from, shown above the footer when the list mixes chats. */
-  meta?: { agentId: string; fallback: string | null };
+  /** The chat this card came from, shown above the footer when the list mixes chats, led by its repo on the board. */
+  meta?: { agentId: string; fallback: string | null; repo?: string };
   expanded: boolean;
   /** The card is on its way out after a tick. */
   leaving: boolean;
@@ -376,6 +378,7 @@ export function TodoCard({
         onStart={drag.onStart}
         onMove={drag.onMove}
         onEnd={drag.onEnd}
+        crossover={drag.crossover}
         swipeable={!ghost && !typing}
         onSwipe={(dx) => swipe.setValue(Math.max(-width.current, Math.min(width.current, dx)))}
         onSwipeEnd={onSwipeEnd}
@@ -551,7 +554,7 @@ export function TodoCard({
               >
                 <Icon name="CornerUpLeft" size={12} color={overJump ? colors.foreground : colors.foregroundMuted} />
                 <Text style={[styles.time, overJump && styles.timeHover]}>{whenOf(todo)}</Text>
-                {meta ? <ChatName theme={theme} agentId={meta.agentId} fallback={meta.fallback} /> : null}
+                {meta ? <ChatName theme={theme} agentId={meta.agentId} fallback={meta.fallback} repo={meta.repo} /> : null}
               </Pressable>
             )}
           </Hover>
@@ -594,12 +597,13 @@ export function TodoCard({
   );
 }
 
-/** The chat's name, muted, kept current with the chat's own title. */
-function ChatName({ theme, agentId, fallback }: { theme: PluginTheme; agentId: string; fallback: string | null }) {
+/** The chat's name, muted, kept current with the chat's own title, after its repo's name when given. */
+function ChatName({ theme, agentId, fallback, repo }: { theme: PluginTheme; agentId: string; fallback: string | null; repo?: string }) {
   const title = useAgent(agentId, (agent) => agent.title);
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 5, flexShrink: 1, minWidth: 0, opacity: 0.6 }}>
       <Text numberOfLines={1} style={{ flexShrink: 1, color: theme.colors.foregroundMuted, fontSize: 11.5 }}>
+        {repo ? `${repo} · ` : ""}
         {title ?? fallback ?? "Untitled chat"}
       </Text>
     </View>

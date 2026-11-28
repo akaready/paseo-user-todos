@@ -13,14 +13,16 @@ interface DragCardProps extends ViewProps {
   mouse: boolean;
   armed: boolean;
   onStart(): void;
-  /** How far the pointer has moved down since the card was picked up; negative is up. */
-  onMove(dy: number): void;
-  onEnd(dy: number): void;
+  /** How far the pointer has moved down (and right) since the card was picked up; negative is up (left). */
+  onMove(dy: number, dx: number): void;
+  onEnd(dy: number, dx: number): void;
   /** A swipe sideways is on: how far the pointer has moved right (negative: left) since it began. */
   onSwipe(dx: number): void;
   onSwipeEnd(dx: number): void;
   /** Whether this card can be swiped at all. */
   swipeable: boolean;
+  /** A swipe that goes this far sideways turns into a drag, for cards that can be dropped in another column. */
+  crossover?: number;
 }
 
 /**
@@ -30,9 +32,9 @@ interface DragCardProps extends ViewProps {
  * re-renders it causes. PanResponder restarts `dy` at 0 when the card takes over mid-gesture,
  * which only costs the few pixels the pointer moved before it did.
  */
-export function DragCard({ mouse, armed, onStart, onMove, onEnd, onSwipe, onSwipeEnd, swipeable, children, ...view }: DragCardProps) {
-  const latest = useRef({ mouse, armed, onStart, onMove, onEnd, onSwipe, onSwipeEnd, swipeable });
-  latest.current = { mouse, armed, onStart, onMove, onEnd, onSwipe, onSwipeEnd, swipeable };
+export function DragCard({ mouse, armed, onStart, onMove, onEnd, onSwipe, onSwipeEnd, swipeable, crossover = Infinity, children, ...view }: DragCardProps) {
+  const latest = useRef({ mouse, armed, onStart, onMove, onEnd, onSwipe, onSwipeEnd, swipeable, crossover });
+  latest.current = { mouse, armed, onStart, onMove, onEnd, onSwipe, onSwipeEnd, swipeable, crossover };
   // What the gesture turned out to be, decided by its first clear direction.
   const mode = useRef<"drag" | "swipe">("drag");
   const responder = useRef(
@@ -60,16 +62,22 @@ export function DragCard({ mouse, armed, onStart, onMove, onEnd, onSwipe, onSwip
         if (mode.current === "drag") latest.current.onStart();
       },
       onPanResponderMove: (_, { dx, dy }) => {
+        if (mode.current === "swipe" && Math.abs(dx) > latest.current.crossover) {
+          // Far enough sideways to be leaving the column: the card springs back and is carried instead.
+          mode.current = "drag";
+          latest.current.onSwipeEnd(0);
+          latest.current.onStart();
+        }
         if (mode.current === "swipe") latest.current.onSwipe(dx);
-        else latest.current.onMove(dy);
+        else latest.current.onMove(dy, dx);
       },
       onPanResponderRelease: (_, { dx, dy }) => {
         if (mode.current === "swipe") latest.current.onSwipeEnd(dx);
-        else latest.current.onEnd(dy);
+        else latest.current.onEnd(dy, dx);
       },
       onPanResponderTerminate: (_, { dx, dy }) => {
         if (mode.current === "swipe") latest.current.onSwipeEnd(dx);
-        else latest.current.onEnd(dy);
+        else latest.current.onEnd(dy, dx);
       },
     }),
   ).current;

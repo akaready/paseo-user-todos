@@ -98,6 +98,9 @@ export const SORTS = ["newest", "oldest", "manual", "status"] as const;
 export type Sort = (typeof SORTS)[number];
 export const GROUPS = ["chat", "status"] as const;
 export type Group = (typeof GROUPS)[number];
+/** The Todos screen's own groups: the panel's two, plus a kanban board of statuses on wide layouts. */
+export const SCREEN_GROUPS = ["board", ...GROUPS] as const;
+export type ScreenGroup = (typeof SCREEN_GROUPS)[number];
 
 /** How the list is grouped and sorted, with a saved sort of "status" read as its replacement. */
 export function viewOf(values: { sort: Sort; group: Group }): { group: Group; sort: Exclude<Sort, "status"> } {
@@ -114,6 +117,11 @@ export const todoSettings = defineSettings({
     confetti: z.boolean().default(true),
     sort: z.enum(SORTS).default("newest"),
     group: z.enum(GROUPS).default("chat"),
+    /** The Todos screen's group and sort, kept apart from the panel's. Unset: a board on wide layouts, else the panel's. */
+    screenGroup: z.enum(SCREEN_GROUPS).optional(),
+    screenSort: z.enum(SORTS).optional(),
+    /** Statuses the Todos screen hides, by id. Unset: all are shown. */
+    screenHidden: z.array(z.string()).optional(),
     /** The list, in the order the dropdown shows it. The first open one is what a new todo starts as. */
     statuses: z.array(statusSchema).min(2).default(DEFAULT_STATUSES),
     /**

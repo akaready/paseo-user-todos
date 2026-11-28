@@ -30,7 +30,10 @@ export interface MenuOption {
 /** Where a menu opens: the trigger's box, in the panel's own coordinates. */
 export interface MenuState {
   rect: { x: number; y: number; width: number; height: number };
-  options: readonly MenuOption[];
+  /** Which toolbar menu this is: the panel builds its rows on every render, and a pick leaves it open. */
+  kind?: "filter" | "view";
+  /** A one-off menu's rows, fixed when it opened: a pick closes it. */
+  options?: readonly MenuOption[];
   /** Which edge of the trigger the menu lines up with. */
   align?: "start" | "end";
 }
@@ -169,22 +172,26 @@ export function Separator({ theme }: { theme: PluginTheme }) {
   return <View style={{ height: 1, marginVertical: 4, backgroundColor: theme.colors.border }} />;
 }
 
-/** A dropdown of rows: the sort menu and the status menu. */
+/** A dropdown of rows. With `keepOpen` a pick leaves it up, so the rows it is given must be current. */
 export function MenuLayer({
   theme,
   state,
+  options,
+  keepOpen = false,
   bounds,
   onClose,
 }: {
   theme: PluginTheme;
   state: MenuState;
+  options: readonly MenuOption[];
+  keepOpen?: boolean;
   bounds: { width: number; height: number };
   onClose(): void;
 }) {
   return (
     <MenuSurface theme={theme} rect={state.rect} bounds={bounds} width={180} align={state.align} label="Menu" onClose={onClose}>
       <ScrollView style={{ maxHeight: LIST_MAX + 2 * ROW }}>
-      {state.options.map((option) => (
+      {options.map((option) => (
         <View key={option.key}>
           {option.divider ? <Separator theme={theme} /> : null}
           {option.heading ? (
@@ -198,7 +205,7 @@ export function MenuLayer({
             selected={option.selected}
             leading={option.icon ? <Icon name={option.icon.name} size={16} color={option.icon.color} /> : undefined}
             onPress={() => {
-              onClose();
+              if (!keepOpen) onClose();
               option.onSelect();
             }}
           />
