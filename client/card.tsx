@@ -37,7 +37,8 @@ export function makeCardStyles(theme: PluginTheme) {
     why: { marginTop: 3, color: colors.foregroundMuted, fontSize: 12, lineHeight: 17 },
     chips: { flexDirection: "row" as const, flexWrap: "wrap" as const, gap: 6, marginTop: 10 },
     chipBox: { maxWidth: "100%" as const },
-    chipText: { flexShrink: 1, flexDirection: "row" as const, flexWrap: "wrap" as const, columnGap: 5 },
+    // One line, ellipsized: a wrapping row inside a chip is mismeasured on native, and the card overflows.
+    chipText: { flexShrink: 1, minWidth: 0 },
     chip: {
       flexDirection: "row" as const,
       alignItems: "center" as const,
@@ -167,6 +168,8 @@ export interface CardProps {
   /** The status a card has when it is plain, with no tint. */
   plain: boolean;
   registry: readonly RegisteredTag[];
+  /** Room under the card, before the next one. */
+  gap: number;
   /** The chat this card came from, shown above the footer when the list mixes chats. */
   meta?: { agentId: string; fallback: string | null };
   expanded: boolean;
@@ -204,6 +207,7 @@ export function TodoCard({
   status,
   plain,
   registry,
+  gap,
   meta,
   expanded,
   leaving,
@@ -342,7 +346,7 @@ export function TodoCard({
       ref={ghost ? undefined : (node) => drag.nodeRef(node as unknown as View | null)}
       onLayout={({ nativeEvent }) => {
         width.current = nativeEvent.layout.width;
-        setBox((current) => (animating && current > 0 ? current : nativeEvent.layout.height + 10));
+        setBox((current) => (animating && current > 0 ? current : nativeEvent.layout.height + gap));
       }}
       pointerEvents={ghost ? "none" : "auto"}
       style={[
@@ -352,7 +356,7 @@ export function TodoCard({
           borderColor: edge,
           borderRadius: 12,
           overflow: "hidden",
-          marginBottom: ghost ? 0 : 10,
+          marginBottom: ghost ? 0 : gap,
           // A lifted card leaves its place held but undrawn: its copy is in the drag layer.
           opacity: drag.hidden ? 0 : fade,
           transform: [
@@ -453,11 +457,11 @@ export function TodoCard({
                         onPress={guard(() => onLink(link.url))}
                         style={[styles.chip, { borderColor: edge }, over && styles.chipHover]}
                       >
-                        <View style={styles.chipText}>
-                          {/* Always the real host and path: a label from the agent never stands in for where a link goes. */}
+                        {/* Always the real host and path: a label from the agent never stands in for where a link goes. */}
+                        <Text numberOfLines={1} style={styles.chipText}>
                           <Text style={styles.host}>{host}</Text>
-                          {path ? <Text style={styles.path}>{path}</Text> : null}
-                        </View>
+                          {path ? <Text style={styles.path}>{` ${path}`}</Text> : null}
+                        </Text>
                         <Icon name="ArrowUpRight" size={11} color={over ? colors.foreground : colors.foregroundMuted} />
                       </Pressable>
                     )}
@@ -535,7 +539,7 @@ export function TodoCard({
         ) : null}
         <View style={[styles.timeRow, { borderTopColor: edge }]}>
           {/* The arrow, the time and the chat's name are the only jump target. */}
-          <Hover onChange={setOverJump}>
+          <Hover onChange={setOverJump} style={{ flexShrink: 1, minWidth: 0 }}>
             {() => (
               <Pressable
                 accessibilityRole="button"
@@ -595,7 +599,7 @@ function ChatName({ theme, agentId, fallback }: { theme: PluginTheme; agentId: s
   const title = useAgent(agentId, (agent) => agent.title);
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 5, flexShrink: 1, minWidth: 0, opacity: 0.6 }}>
-      <Text style={{ flexShrink: 1, color: theme.colors.foregroundMuted, fontSize: 11.5 }}>
+      <Text numberOfLines={1} style={{ flexShrink: 1, color: theme.colors.foregroundMuted, fontSize: 11.5 }}>
         {title ?? fallback ?? "Untitled chat"}
       </Text>
     </View>

@@ -5,6 +5,9 @@ import { TAG_HUES } from "./tags";
 /** The panel's id, shared so the client entry and the auto-open path name the same one. */
 export const PANEL_ID = "todos";
 
+/** The screen that lists every todo in every repo. */
+export const SCREEN_ID = "all-todos";
+
 /**
  * Metadata key under which each chat stores its own ID. A panel in the Explorer is told which
  * chat has focus only through that chat's composer, and a composer carries no ID but does carry
@@ -267,7 +270,8 @@ export const addTodo = defineRpc({
 
 export const clearTodos = defineRpc({
   name: "todos.clear",
-  input: z.object({ workspaceId: z.string().optional(), agentId: z.string().optional() }),
+  /** `all` clears every repo's todos. */
+  input: z.object({ workspaceId: z.string().optional(), agentId: z.string().optional(), all: z.boolean().optional() }),
   output: z.object({ cleared: z.number() }),
 });
 

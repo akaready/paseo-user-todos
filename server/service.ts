@@ -415,9 +415,9 @@ export class TodoService {
    * Each affected chat is told once, naming the todos its agent proposed that were still open or
    * waiting, with their comments; todos the user made, and ones already closed, are left out.
    */
-  async clear(filter: { workspaceId?: string; agentId?: string }, paseo: Paseo) {
+  async clear(filter: { workspaceId?: string; agentId?: string; all?: boolean }, paseo: Paseo) {
     await this.store.ready;
-    if (!filter.workspaceId && !filter.agentId) return 0;
+    if (!filter.all && !filter.workspaceId && !filter.agentId) return 0;
     const { statuses } = await this.values();
     const hit = this.store.clear(
       (todo) =>

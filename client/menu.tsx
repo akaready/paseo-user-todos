@@ -183,6 +183,7 @@ export function MenuLayer({
 }) {
   return (
     <MenuSurface theme={theme} rect={state.rect} bounds={bounds} width={180} align={state.align} label="Menu" onClose={onClose}>
+      <ScrollView style={{ maxHeight: LIST_MAX + 2 * ROW }}>
       {state.options.map((option) => (
         <View key={option.key}>
           {option.divider ? <Separator theme={theme} /> : null}
@@ -203,6 +204,7 @@ export function MenuLayer({
           />
         </View>
       ))}
+      </ScrollView>
     </MenuSurface>
   );
 }

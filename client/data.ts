@@ -8,11 +8,11 @@ export interface TodoData {
 }
 
 /**
- * The workspace's todos, kept current: read once, then read again whenever the daemon says
- * something changed. `patch` shows a change at once while its RPC is on the way; the daemon's
+ * The workspace's todos, or every todo when `workspaceId` is null, kept current: read once, then
+ * read again whenever the daemon says something changed (in any workspace, when reading all). `patch` shows a change at once while its RPC is on the way; the daemon's
  * own update replaces it.
  */
-export function useTodoData(workspaceId: string) {
+export function useTodoData(workspaceId: string | null) {
   const list = useRpc(listTodos);
   const listRef = useRef(list);
   listRef.current = list;
@@ -23,7 +23,7 @@ export function useTodoData(workspaceId: string) {
   const refresh = useCallback(async () => {
     const mine = ++latest.current;
     try {
-      const next = await listRef.current({ workspaceId });
+      const next = await listRef.current(workspaceId ? { workspaceId } : {});
       if (mine === latest.current) {
         setData(next);
         setFailed(false);
@@ -38,7 +38,7 @@ export function useTodoData(workspaceId: string) {
   }, [refresh]);
 
   const state = useSubscription(watchTodos, {}, (event) => {
-    if (event.workspaceId === workspaceId) void refresh();
+    if (!workspaceId || event.workspaceId === workspaceId) void refresh();
   });
   const live = state.status === "live";
   useEffect(() => {

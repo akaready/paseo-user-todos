@@ -4,7 +4,9 @@ import {
   useRpc,
   useSettings,
   useSubscription,
+  type PluginScreenProps,
   type PluginWorkspacePanelProps,
+  useWorkspaces,
 } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { Icon, ScrollView } from "@getpaseo/plugin/client/ui";
@@ -148,6 +150,7 @@ function IconButton({
   label,
   active = false,
   disabled = false,
+  large = false,
   onPress,
 }: {
   styles: Styles;
@@ -156,6 +159,7 @@ function IconButton({
   label: string;
   active?: boolean;
   disabled?: boolean;
+  large?: boolean;
   onPress(node: View | null): void;
 }) {
   const node = useRef<View>(null);
@@ -171,13 +175,14 @@ function IconButton({
           onPress={() => onPress(node.current)}
           style={[
             styles.iconButton,
+            large && { width: 40, height: 40, borderRadius: 10 },
             (hovered || active) && styles.iconHover,
             disabled && { opacity: 0.4 },
           ]}
         >
           <Icon
             name={icon}
-            size={16}
+            size={large ? 20 : 16}
             color={
               hovered || active
                 ? theme.colors.foreground
@@ -206,6 +211,7 @@ function GroupHeader({
   icon,
   count,
   open,
+  strong = false,
   onPress,
 }: {
   styles: Styles;
@@ -215,6 +221,8 @@ function GroupHeader({
   icon?: { name: string; color: string };
   count: number;
   open: boolean;
+  /** A repo's heading, set above its chats' headings. */
+  strong?: boolean;
   onPress(): void;
 }) {
   return (
@@ -226,7 +234,7 @@ function GroupHeader({
             accessibilityLabel={`${name}, ${count}`}
             accessibilityState={{ expanded: open }}
             onPress={onPress}
-            style={styles.groupHead}
+            style={[styles.groupHead, strong && { height: 40 }]}
           >
             <Icon
               name={open ? "ChevronDown" : "ChevronRight"}
@@ -238,13 +246,14 @@ function GroupHeader({
               style={[
                 styles.groupText,
                 { flexShrink: 1 },
+                strong && { color: theme.colors.foreground, fontSize: 16, fontWeight: "600" as const },
                 hovered && styles.groupTextHover,
               ]}
               numberOfLines={1}
             >
               {name}
             </Text>
-            <Text style={styles.groupText}>· {count}</Text>
+            <Text style={[styles.groupText, { flexShrink: 0 }]}>· {count}</Text>
           </Pressable>
         )}
       </Hover>
@@ -316,6 +325,14 @@ const TABS_FULL_WIDTH = 150;
 
 /** Room between two cards in a list, which the drag layout adds back wherever it works out positions. */
 const GAP = 10;
+const COMPACT_GAP = 18;
+
+/** Paseo's phone header row (`HEADER_INNER_HEIGHT_MOBILE`): the screen's buttons are drawn into its empty right end. */
+const PHONE_HEADER = 56;
+
+/** The fade under the list's top edge: strips of the background, solid at the top and gone at the bottom. */
+const FADE_STEPS = 8;
+const FADE_STEP = 2;
 
 /** What a card in no drag is told. */
 const NO_DRAG: CardDrag = {
@@ -357,14 +374,67 @@ interface Session {
   ready: boolean;
 }
 
-export function TodoPanel({
+/** The repo a todo belongs to: its workspace's project, keyed so two repos with one name stay apart. */
+type RepoOf = (workspaceId: string | null) => { key: string; title: string };
+
+/** What the all-repos screen narrows its list to: a todo must hold one of the statuses and one of the labels chosen. */
+interface Narrow {
+  statuses: ReadonlySet<string>;
+  labels: ReadonlySet<string>;
+}
+const NOT_NARROWED: Narrow = { statuses: new Set(), labels: new Set() };
+
+/** Every repo's workspaces, grouped by project, for the all-repos screen. */
+const BY_PROJECT = {
+  groupBy: (workspace: { projectId: string; projectDisplayName: string }) => ({
+    key: workspace.projectId,
+    title: workspace.projectDisplayName,
+  }),
+};
+
+export function TodoPanel({ theme, workspaceId, navigation, layout }: PluginWorkspacePanelProps) {
+  return <Todos theme={theme} workspaceId={workspaceId} navigation={navigation} compact={layout.compact} />;
+}
+
+/** The screen opened from the sidebar: every todo in every repo, repo over chat over cards. */
+export function AllTodosScreen({ theme, navigation, layout }: PluginScreenProps) {
+  const projects = useWorkspaces(BY_PROJECT);
+  const repoOf = useCallback<RepoOf>(
+    (workspaceId) => {
+      const found = workspaceId ? projects.find((project) => project.items.some((ref) => ref.id === workspaceId)) : undefined;
+      return found ? { key: found.key, title: found.title ?? "Untitled repo" } : { key: "other", title: "Other" };
+    },
+    [projects],
+  );
+  return <Todos theme={theme} workspaceId={null} navigation={navigation} repoOf={repoOf} compact={layout.compact} />;
+}
+
+/**
+ * The list itself. With a `workspaceId` it is the workspace's panel; with none it is the screen
+ * that reads every workspace's todos, which has no Current tab, no new-todo button, and a filter.
+ */
+function Todos({
   theme,
   workspaceId,
   navigation,
-}: PluginWorkspacePanelProps) {
+  repoOf,
+  compact,
+}: {
+  theme: PluginTheme;
+  workspaceId: string | null;
+  navigation: PluginWorkspacePanelProps["navigation"];
+  repoOf?: RepoOf;
+  /** A phone: bigger, wider-spaced buttons, and more room between cards for a finger. */
+  compact: boolean;
+}) {
+  const everywhere = workspaceId === null;
+  const gap = compact ? COMPACT_GAP : GAP;
+  // The list has scrolled, so cards fade out under its top edge.
+  const [scrolled, setScrolled] = useState(false);
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const { data, failed, patch, reorder, refresh } = useTodoData(workspaceId);
-  const chat = useCurrentChat();
+  const currentChat = useCurrentChat();
+  const chat = everywhere ? null : currentChat;
   const settings = useSettings(todoSettings);
   const values = settings.status === "ready" ? settings.values : defaults;
   const statuses = useMemo(() => normalizeStatuses(values.statuses), [values.statuses]);
@@ -400,7 +470,10 @@ export function TodoPanel({
   const add = useRpc(addTodo);
   const saveOrder = useRpc(reorderTodos);
 
-  const [scope, setScope] = useState<Scope>("chat");
+  const [chosenScope, setScope] = useState<Scope>("chat");
+  const scope: Scope = everywhere ? "all" : chosenScope;
+  const [narrow, setNarrow] = useState<Narrow>(NOT_NARROWED);
+  const narrowed = narrow.statuses.size > 0 || narrow.labels.size > 0;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [statusesOpen, setStatusesOpen] = useState(false);
   const [composing, setComposing] = useState(false);
@@ -458,14 +531,17 @@ export function TodoPanel({
   const todos = useMemo(() => data?.todos ?? [], [data]);
   const inScope = (todo: { agentId: string }) => scope === "all" || todo.agentId === chat;
   const isOpen = (todo: Todo) => todo.status === "open" && !todo.closed;
+  const passes = (todo: Todo) =>
+    (narrow.statuses.size === 0 || narrow.statuses.has(resolveStatus(statuses, todo.statusId).id)) &&
+    (narrow.labels.size === 0 || todo.tags.some((tag) => narrow.labels.has(tagKey(tag))));
   const view = viewOf(values);
   const open = sortTodos(
-    todos.filter((todo) => (isOpen(todo) || leaving.has(todo.id)) && inScope(todo)),
+    todos.filter((todo) => (isOpen(todo) || leaving.has(todo.id)) && inScope(todo) && passes(todo)),
     view.sort,
     statuses,
   );
   const done = sortTodos(
-    todos.filter((todo) => !isOpen(todo) && !leaving.has(todo.id) && inScope(todo)),
+    todos.filter((todo) => !isOpen(todo) && !leaving.has(todo.id) && inScope(todo) && passes(todo)),
     view.sort === "oldest" ? "oldest" : "newest",
     statuses,
   );
@@ -565,6 +641,33 @@ export function TodoPanel({
     );
 
 
+  const flip = (set: ReadonlySet<string>, key: string) => {
+    const next = new Set(set);
+    if (!next.delete(key)) next.add(key);
+    return next;
+  };
+  /** The all-repos screen's filter: Paseo's labels are one list for every repo, so one list is offered. */
+  const filterOptions: MenuOption[] = [
+    ...(narrowed ? [{ key: "clear", label: "Clear filter", onSelect: () => setNarrow(NOT_NARROWED) }] : []),
+    ...statuses.map((status, at) => ({
+      key: `status-${status.id}`,
+      label: status.label,
+      heading: at === 0 ? "Status" : undefined,
+      divider: at === 0 && narrowed,
+      selected: narrow.statuses.has(status.id),
+      icon: { name: statusIcon(status), color: statusInk(theme, status.color) },
+      onSelect: () => setNarrow((current) => ({ ...current, statuses: flip(current.statuses, status.id) })),
+    })),
+    ...registry.map((tag, at) => ({
+      key: `label-${tag.name}`,
+      label: tag.name,
+      heading: at === 0 ? "Label" : undefined,
+      divider: at === 0,
+      selected: narrow.labels.has(tagKey(tag.name)),
+      onSelect: () => setNarrow((current) => ({ ...current, labels: flip(current.labels, tagKey(tag.name)) })),
+    })),
+  ];
+
   const comment = (todo: Todo, text: string) => {
     void addNote({ id: todo.id, text })
       .then(({ comment: saved }) => {
@@ -616,7 +719,10 @@ export function TodoPanel({
     const known = registry.find((tag) => tagKey(tag.name) === tagKey(raw));
     let name = known?.name ?? null;
     if (!known) {
-      const result = await makeLabel({ workspaceId, name: raw }).catch(() => null);
+      // The label is made through the todo's own workspace, or through this panel's for a todo still being written.
+      const home = ("workspaceId" in todo ? (todo as Todo).workspaceId : null) ?? workspaceId;
+      if (!home) return;
+      const result = await makeLabel({ workspaceId: home, name: raw }).catch(() => null);
       name = result?.name ?? null;
       if (!name) return;
       if (!ownTags.some((tag) => tagKey(tag.name) === tagKey(name!))) save({ tags: [...ownTags, { name, color }] });
@@ -628,7 +734,13 @@ export function TodoPanel({
   };
 
   const clearAll = () => {
-    const filter = scope === "all" ? { workspaceId } : chat ? { agentId: chat } : null;
+    const filter = everywhere
+      ? { all: true }
+      : scope === "all"
+        ? { workspaceId: workspaceId! }
+        : chat
+          ? { agentId: chat }
+          : null;
     if (!filter) return;
     void clear(filter).then(refresh, () => void refresh());
   };
@@ -644,7 +756,7 @@ export function TodoPanel({
   };
 
   const create = async (input: NewTodoValues) => {
-    if (!chat) return "No chat is open.";
+    if (!chat || !workspaceId) return "No chat is open.";
     const result = await add({
       agentId: chat,
       workspaceId,
@@ -711,7 +823,7 @@ export function TodoPanel({
     let y = s.frames.get(s.group[0]!)!.y;
     for (const key of order) {
       tops.set(key, y);
-      y += (s.frames.get(key)?.height ?? 0) + GAP;
+      y += (s.frames.get(key)?.height ?? 0) + gap;
     }
     return tops;
   };
@@ -864,6 +976,7 @@ export function TodoPanel({
     <TodoCard
       key={todo.id}
       theme={theme}
+      gap={gap}
       todo={todo}
       status={resolveStatus(statuses, todo.statusId)}
       plain={resolveStatus(statuses, todo.statusId).id === plainStatus.id}
@@ -894,20 +1007,179 @@ export function TodoPanel({
   const sectionStatuses = [...statuses.filter((item) => !item.closes), ...statuses.filter((item) => item.closes)];
   const effectiveId = (todo: Todo) =>
     resolveStatus(statuses, leaving.has(todo.id) ? (leftFrom.current.get(todo.id) ?? todo.statusId) : todo.statusId).id;
-  const sections = sectionStatuses
-    .map((item) => ({
-      status: item,
-      items: item.closes
-        ? done.filter((todo) => todo.status === "open" && resolveStatus(statuses, todo.statusId).id === item.id)
-        : open.filter((todo) => effectiveId(todo) === item.id),
-    }))
-    .filter((section) => section.items.length > 0);
+  const sectionsOf = (openTodos: readonly Todo[], doneTodos: readonly Todo[]) =>
+    sectionStatuses
+      .map((item) => ({
+        status: item,
+        items: item.closes
+          ? doneTodos.filter((todo) => todo.status === "open" && resolveStatus(statuses, todo.statusId).id === item.id)
+          : openTodos.filter((todo) => effectiveId(todo) === item.id),
+      }))
+      .filter((section) => section.items.length > 0);
   const toggleFold = (key: string, currentlyOpen: boolean) => {
     folded.set(key, currentlyOpen);
     setFoldEpoch((epoch) => epoch + 1);
   };
 
+  const statusSections = (list: ReturnType<typeof sectionsOf>, prefix: string) =>
+    list.map(({ status: item, items }) => {
+      const key = `${prefix}status:${item.id}`;
+      const shown = !isFolded(key, item.closes);
+      const ids = items.map((todo) => todo.id);
+      return (
+        <View key={key} style={styles.group}>
+          <GroupHeader
+            styles={styles}
+            theme={theme}
+            name={item.label}
+            icon={{ name: statusIcon(item), color: statusInk(theme, item.color) }}
+            count={items.length}
+            open={shown}
+            onPress={() => toggleFold(key, shown)}
+          />
+          {!shown ? null : item.closes ? (
+            <View style={styles.done}>
+              {items.map((todo) => (
+                <DoneRow
+                  key={todo.id}
+                  styles={styles}
+                  theme={theme}
+                  todo={todo}
+                  status={resolveStatus(statuses, todo.statusId)}
+                  onMenu={(anchor) => statusMenu(todo, anchor)}
+                />
+              ))}
+            </View>
+          ) : (
+            <View style={[styles.list, { paddingTop: 4 }]}>{items.map((todo) => card(todo, ids))}</View>
+          )}
+        </View>
+      );
+    });
+
+  const actions = (
+    <View style={[styles.acts, compact && { gap: 10 }]}>
+      {everywhere ? (
+        <IconButton
+          styles={styles}
+          theme={theme}
+          icon="ListFilter"
+          label="Filter"
+          large={compact}
+          active={narrowed}
+          onPress={(node) => openMenu(node, filterOptions)}
+        />
+      ) : (
+        <IconButton
+          styles={styles}
+          theme={theme}
+          icon="Plus"
+          label="New todo"
+          large={compact}
+          active={composing}
+          disabled={!chat}
+          onPress={() => setComposing((on) => !on)}
+        />
+      )}
+      <IconButton
+        styles={styles}
+        theme={theme}
+        icon="Settings2"
+        label={`Sort: ${SORT_LABELS[view.sort]}`}
+          large={compact}
+        onPress={(node) =>
+          openMenu(node, [
+            ...(Object.keys(GROUP_LABELS) as Group[]).map((key, at) => ({
+              key: `group-${key}`,
+              label: GROUP_LABELS[key],
+              heading: at === 0 ? "Group by" : undefined,
+              selected: key === view.group,
+              onSelect: () => save({ group: key, sort: view.sort }),
+            })),
+            ...(Object.keys(SORT_LABELS) as Exclude<Sort, "status">[]).map((key, at) => ({
+              key: `sort-${key}`,
+              label: SORT_LABELS[key],
+              heading: at === 0 ? "Sort" : undefined,
+              divider: at === 0,
+              selected: key === view.sort,
+              onSelect: () => save({ sort: key, group: view.group }),
+            })),
+          ])
+        }
+      />
+      <IconButton
+        styles={styles}
+        theme={theme}
+        icon="Settings"
+        label="Panel settings"
+          large={compact}
+        onPress={() => setSettingsOpen((on) => !on)}
+      />
+    </View>
+  );
   const groups = scope === "all" ? [...new Set(open.map((todo) => todo.agentId))] : [];
+  // The screen's repo layer: each repo's chats, in the order the sort first meets them.
+  const repos = new Map<string, { title: string; todos: Todo[]; agents: string[] }>();
+  if (repoOf) {
+    for (const todo of view.group === "status" ? [...open, ...done] : open) {
+      const { key, title } = repoOf(todo.workspaceId);
+      const repo = repos.get(key) ?? { title, todos: [], agents: [] };
+      repo.todos.push(todo);
+      if (!repo.agents.includes(todo.agentId)) repo.agents.push(todo.agentId);
+      repos.set(key, repo);
+    }
+  }
+  const chatSection = (agentId: string) => {
+    const items = open.filter((todo) => todo.agentId === agentId);
+    const ids = items.map((todo) => todo.id);
+    return (
+      <View key={agentId} style={styles.group}>
+        <ChatHead
+          styles={styles}
+          theme={theme}
+          agentId={agentId}
+          fallback={items[0]?.chatTitle ?? null}
+          count={items.length}
+          open={!folded.get(agentId)}
+          onPress={() => {
+            folded.set(agentId, !folded.get(agentId));
+            setFoldEpoch((epoch) => epoch + 1);
+          }}
+        />
+        {folded.get(agentId) ? null : (
+          <View style={[styles.list, { paddingTop: 4 }]}>{items.map((todo) => card(todo, ids))}</View>
+        )}
+      </View>
+    );
+  };
+  const repoLevel = [...repos].map(([key, repo]) => {
+    const repoKey = `repo:${key}`;
+    const shown = !isFolded(repoKey);
+    return (
+      <View key={repoKey} style={styles.group}>
+        <GroupHeader
+          styles={styles}
+          theme={theme}
+          name={repo.title}
+          count={repo.todos.length}
+          open={shown}
+          strong
+          onPress={() => toggleFold(repoKey, shown)}
+        />
+        {!shown
+          ? null
+          : view.group === "status"
+            ? statusSections(
+                sectionsOf(
+                  open.filter((todo) => repo.todos.includes(todo)),
+                  done.filter((todo) => repo.todos.includes(todo)),
+                ),
+                `${repoKey}:`,
+              )
+            : repo.agents.map(chatSection)}
+      </View>
+    );
+  });
   const empty = data !== null && open.length === 0 && done.length === 0 && !composing;
   const chatIds = open.map((todo) => todo.id);
   const liftedTodo = lifted ? todos.find((todo) => todo.id === lifted.id) : undefined;
@@ -920,69 +1192,38 @@ export function TodoPanel({
         setBounds({ width: nativeEvent.layout.width, height: nativeEvent.layout.height })
       }
     >
-      <View style={styles.head}>
-        <Segmented<Scope>
-          theme={theme}
-          height={26}
-          compact={tabsWidth < TABS_FULL_WIDTH}
-          onLayout={(event) => setTabsWidth(event.nativeEvent.layout.width)}
-          style={{ flex: 1, minWidth: 0 }}
-          value={scope}
-          onChange={setScope}
-          items={[
-            { key: "chat", label: "Current", count: thisChatCount },
-            { key: "all", label: "All", count: allCount },
-          ]}
-        />
-        <View style={styles.acts}>
-          <IconButton
-            styles={styles}
+      {everywhere ? (
+        // A phone draws the buttons into Paseo's header row, below; elsewhere they keep a row of their own.
+        compact ? null : <View style={[styles.head, { justifyContent: "flex-end", borderBottomWidth: 0 }]}>{actions}</View>
+      ) : (
+        <View style={styles.head}>
+          <Segmented<Scope>
             theme={theme}
-            icon="Plus"
-            label="New todo"
-            active={composing}
-            disabled={!chat}
-            onPress={() => setComposing((on) => !on)}
+            height={26}
+            compact={tabsWidth < TABS_FULL_WIDTH}
+            onLayout={(event) => setTabsWidth(event.nativeEvent.layout.width)}
+            style={{ flex: 1, minWidth: 0 }}
+            value={scope}
+            onChange={setScope}
+            items={[
+              { key: "chat", label: "Current", count: thisChatCount },
+              { key: "all", label: "All", count: allCount },
+            ]}
           />
-          <IconButton
-            styles={styles}
-            theme={theme}
-            icon="Settings2"
-            label={`Sort: ${SORT_LABELS[view.sort]}`}
-            onPress={(node) =>
-              openMenu(node, [
-                ...(Object.keys(GROUP_LABELS) as Group[]).map((key, at) => ({
-                  key: `group-${key}`,
-                  label: GROUP_LABELS[key],
-                  heading: at === 0 ? "Group by" : undefined,
-                  selected: key === view.group,
-                  onSelect: () => save({ group: key, sort: view.sort }),
-                })),
-                ...(Object.keys(SORT_LABELS) as Exclude<Sort, "status">[]).map((key, at) => ({
-                  key: `sort-${key}`,
-                  label: SORT_LABELS[key],
-                  heading: at === 0 ? "Sort" : undefined,
-                  divider: at === 0,
-                  selected: key === view.sort,
-                  onSelect: () => save({ sort: key, group: view.group }),
-                })),
-              ])
-            }
-          />
-          <IconButton
-            styles={styles}
-            theme={theme}
-            icon="Settings"
-            label="Panel settings"
-            onPress={() => setSettingsOpen((on) => !on)}
-          />
+          {actions}
         </View>
-      </View>
+      )}
       <>
+          <View style={{ flex: 1 }}>
           <ScrollView
             style={{ flex: 1 }}
             contentContainerStyle={{ paddingBottom: 12 }}
             scrollEnabled={armed === null && lifted === null}
+            scrollEventThrottle={16}
+            onScroll={({ nativeEvent }) => {
+              const next = nativeEvent.contentOffset.y > 0;
+              if (next !== scrolled) setScrolled(next);
+            }}
           >
             <View ref={content} style={{ position: "relative" }}>
               <View style={{ paddingHorizontal: 12 }}>
@@ -1021,69 +1262,12 @@ export function TodoPanel({
                 <View style={styles.empty}>
                   <Icon name="UserRound" size={20} color={theme.colors.foregroundMuted} />
                 </View>
+              ) : repoOf ? (
+                repoLevel
               ) : view.group === "status" ? (
-                <>
-                  {sections.map(({ status: item, items }) => {
-                    const key = `status:${item.id}`;
-                    const shown = !isFolded(key, item.closes);
-                    const ids = items.map((todo) => todo.id);
-                    return (
-                      <View key={key} style={styles.group}>
-                        <GroupHeader
-                          styles={styles}
-                          theme={theme}
-                          name={item.label}
-                          icon={{ name: statusIcon(item), color: statusInk(theme, item.color) }}
-                          count={items.length}
-                          open={shown}
-                          onPress={() => toggleFold(key, shown)}
-                        />
-                        {!shown ? null : item.closes ? (
-                          <View style={styles.done}>
-                            {items.map((todo) => (
-                              <DoneRow
-                                key={todo.id}
-                                styles={styles}
-                                theme={theme}
-                                todo={todo}
-                                status={resolveStatus(statuses, todo.statusId)}
-                                onMenu={(anchor) => statusMenu(todo, anchor)}
-                              />
-                            ))}
-                          </View>
-                        ) : (
-                          <View style={[styles.list, { paddingTop: 4 }]}>{items.map((todo) => card(todo, ids))}</View>
-                        )}
-                      </View>
-                    );
-                  })}
-                </>
+                statusSections(sectionsOf(open, done), "")
               ) : scope === "all" ? (
-                groups.map((agentId) => {
-                  const items = open.filter((todo) => todo.agentId === agentId);
-                  const ids = items.map((todo) => todo.id);
-                  return (
-                    <View key={agentId} style={styles.group}>
-                      <ChatHead
-                        styles={styles}
-                        theme={theme}
-                        agentId={agentId}
-                        fallback={items[0]?.chatTitle ?? null}
-                        count={items.length}
-                        open={!folded.get(agentId)}
-                        onPress={() => {
-                          folded.set(agentId, !folded.get(agentId));
-                          setFoldEpoch((epoch) => epoch + 1);
-                        }}
-                      />
-                      {folded.get(agentId) ? null : (
-                        <View style={[styles.list, { paddingTop: 4 }]}>
-                          {items.map((todo) => card(todo, ids))}
-                        </View>
-                      )}
-                    </View>
-                  );
-                })
+                groups.map(chatSection)
               ) : (
                 <View style={[styles.list, composing && { paddingTop: 0 }]}>
                   {open.map((todo) => card(todo, chatIds))}
@@ -1151,6 +1335,17 @@ export function TodoPanel({
               ) : null}
             </View>
           </ScrollView>
+          {scrolled ? (
+            <View pointerEvents="none" style={{ position: "absolute", top: 0, left: 0, right: 0 }}>
+              {Array.from({ length: FADE_STEPS }, (_, at) => (
+                <View
+                  key={at}
+                  style={{ height: FADE_STEP, backgroundColor: theme.colors.surface0, opacity: 1 - at / FADE_STEPS }}
+                />
+              ))}
+            </View>
+          ) : null}
+          </View>
           {waiting.length > 0 ? (
             <View style={styles.foot}>
               <Text style={styles.footText}>
@@ -1159,6 +1354,14 @@ export function TodoPanel({
             </View>
           ) : null}
         </>
+      {everywhere && compact ? (
+        <View
+          pointerEvents="box-none"
+          style={{ position: "absolute", top: -PHONE_HEADER, right: 8, height: PHONE_HEADER, flexDirection: "row", alignItems: "center" }}
+        >
+          {actions}
+        </View>
+      ) : null}
       {settingsOpen ? (
         <SettingsPopover
           theme={theme}
